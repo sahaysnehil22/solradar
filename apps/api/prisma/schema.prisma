@@ -66,15 +66,15 @@ model Plan {
 
 // 4. Subscriptions
 model Subscription {
-  id                   String    @id @default(uuid())
-  userId               String    @map("user_id")
-  stripeSubscriptionId String    @unique @map("stripe_subscription_id")
-  planId               String    @map("plan_id")
-  status               String    @default("active") // "active" | "canceled" | "past_due"
-  currentPeriodEnd     DateTime  @map("current_period_end")
-  cancelAtPeriodEnd    Boolean   @default(false) @map("cancel_at_period_end")
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @updatedAt @map("updated_at")
+  id                     String    @id @default(uuid())
+  userId                 String    @map("user_id")
+  providerSubscriptionId String    @unique @map("provider_subscription_id")
+  planId                 String    @map("plan_id")
+  status                 String    @default("active") // "active" | "canceled" | "past_due"
+  currentPeriodEnd       DateTime  @map("current_period_end")
+  cancelAtPeriodEnd      Boolean   @default(false) @map("cancel_at_period_end")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   plan Plan @relation(fields: [planId], references: [id])
@@ -86,13 +86,13 @@ model Subscription {
 
 // 5. Payments History
 model Payment {
-  id                    String   @id @default(uuid())
-  userId                String   @map("user_id")
-  stripePaymentIntentId String   @unique @map("stripe_payment_intent_id")
-  amountCents           Int      @map("amount_cents")
-  currency              String   @default("usd")
-  status                String   @default("succeeded") // "succeeded" | "failed"
-  createdAt             DateTime @default(now()) @map("created_at")
+  id                String   @id @default(uuid())
+  userId            String   @map("user_id")
+  providerPaymentId String   @unique @map("provider_payment_id")
+  amountCents       Int      @map("amount_cents")
+  currency          String   @default("usd")
+  status            String   @default("succeeded") // "succeeded" | "failed"
+  createdAt         DateTime @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -102,11 +102,11 @@ model Payment {
 
 // 6. Payment Events (Idempotency Key for Webhooks)
 model PaymentEvent {
-  id            String   @id @default(uuid())
-  stripeEventId String   @unique @map("stripe_event_id")
-  type          String
-  payload       Json?    @default("{}")
-  processedAt   DateTime @default(now()) @map("processed_at")
+  id              String   @id @default(uuid())
+  providerEventId String   @unique @map("provider_event_id")
+  type            String
+  payload         Json?    @default("{}")
+  processedAt     DateTime @default(now()) @map("processed_at")
 
   @@map("payment_events")
 }

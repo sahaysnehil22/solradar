@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { FastifyInstance } from 'fastify';
 import { createServer } from '../src/server.js';
-import { db } from '../src/db/store.js';
+import { prisma } from '../src/db/prisma.js';
 import { PlanCode } from '@solradar/shared';
 
 describe('Billing Idempotency, Retry Storm & Credit Safety', () => {
@@ -59,8 +59,8 @@ describe('Billing Idempotency, Retry Storm & Credit Safety', () => {
     expect(processed).toHaveLength(1);
     expect(duplicates).toHaveLength(4);
 
-    // Verify user is upgraded to Scout
-    const updatedUser = db.users.get(testUserId);
+    // Verify user is upgraded to Scout in database
+    const updatedUser = await prisma.user.findUnique({ where: { id: testUserId } });
     expect(updatedUser?.plan).toBe(PlanCode.SCOUT);
   });
 
@@ -97,7 +97,7 @@ describe('Billing Idempotency, Retry Storm & Credit Safety', () => {
     const refereeUserId = JSON.parse(refereeRes.body).user.id;
 
     // Verify referral credit was created
-    const refereeCredits = Array.from(db.referralCredits.values()).filter((c) => c.userId === refereeUserId);
+    const refereeCredits = await prisma.referralCredit.findMany({ where: { userId: refereeUserId } });
     expect(refereeCredits).toHaveLength(1);
     expect(refereeCredits[0].percentOff).toBe(20);
     expect(refereeCredits[0].monthsTotal).toBe(3);
@@ -119,7 +119,8 @@ describe('Billing Idempotency, Retry Storm & Credit Safety', () => {
       },
     });
 
-    expect(refereeCredits[0].monthsApplied).toBe(1);
-    expect(refereeCredits[0].status).toBe('active');
+    const updatedCredits = await prisma.referralCredit.findMany({ where: { userId: refereeUserId } });
+    expect(updatedCredits[0].monthsApplied).toBe(1);
+    expect(updatedCredits[0].status).toBe('active');
   }, 15000);
 });

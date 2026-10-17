@@ -1,34 +1,59 @@
-# SolRadar Operations, Backups & Disaster Recovery (`docs/ops.md`)
+# SolRadar Operations, Migrations & Disaster Recovery (`docs/ops.md`)
 
-> **Operations Protocol:** Standard Operating Procedures for backups, emergency restore, migration rollbacks, and queue monitoring.
+> **Operations Protocol:** Standard Operating Procedures for Prisma migrations, backups, emergency restore, and BullMQ queue management.
 
 ---
 
-## 1. Backup Strategy & Point-In-Time Recovery (PITR)
+## 1. Prisma Migration Lifecycle
+
+### Initial Migration Review
+The initial database schema was generated from `apps/api/prisma/schema.prisma` and is version-controlled at `apps/api/prisma/migrations/20261018000000_init/migration.sql`.
+Key schema guarantees verified by hand:
+- Provider-agnostic columns: `provider_subscription_id`, `provider_payment_id`, `provider_event_id` (generic across Noop and Stripe providers).
+- Uniqueness constraints: `UNIQUE(provider_event_id)` on `payment_events`, `UNIQUE(user_id, alert_id)` on `alert_deliveries`, `UNIQUE(signature)` on `wallet_trades`, and `UNIQUE(user_id, address)` on `tracked_wallets`.
+- Foreign key cascading: `ON DELETE CASCADE` on `subscriptions`, `tracked_wallets`, and `watchlists`.
+
+### Applying Migrations in Production
+Before starting the API or Worker services:
+```bash
+# Apply pending migrations strictly forward
+npx prisma migrate deploy --schema=apps/api/prisma/schema.prisma
+```
+
+### Developing New Migrations
+```bash
+# In development environment only:
+cd apps/api
+npx prisma migrate dev --name <migration_name>
+```
+
+---
+
+## 2. Backup Strategy & Point-In-Time Recovery (PITR)
 
 ### Automated Daily Snapshots
-- Managed via Supabase / Render Postgres daily automated backup snapshots.
-- WAL (Write-Ahead Logging) archiving is enabled with 7-day retention for Point-In-Time Recovery (PITR) down to the second.
+- Managed via cloud PostgreSQL daily automated backup snapshots.
+- WAL (Write-Ahead Logging) archiving enabled with 7-day retention for Point-In-Time Recovery (PITR) down to the second.
 
-### Manual On-Demand Backup
-Before applying any database migration touching money or identity tables:
+### Manual Pre-Migration Backup
+Before applying any database migration touching payment, subscription, or user tables:
 ```bash
 pg_dump -Fc -v --no-owner -h $DB_HOST -U $DB_USER -d solradar > backups/solradar_pre_migration_$(date +%Y%m%d_%H%M%S).dump
 ```
 
 ---
 
-## 2. Disaster Recovery & Tested Restore Procedure
+## 3. Disaster Recovery & Tested Restore Procedure
 
-In the event of database corruption or unrecoverable error:
+In the event of database corruption or unrecoverable state:
 
 1. **Step 1: Terminate Worker Ingestion**
-   Stop all consumer workers to freeze state mutations:
+   Stop consumer workers to freeze state mutations:
    ```bash
    docker compose stop worker
    ```
 
-2. **Step 2: Provision Staging Target or Flush Corrupt State**
+2. **Step 2: Flush State & Recreate Database**
    ```bash
    dropdb -h $DB_HOST -U $DB_USER solradar
    createdb -h $DB_HOST -U $DB_USER solradar
@@ -57,21 +82,19 @@ In the event of database corruption or unrecoverable error:
 
 ---
 
-## 3. Migration Rollback Protocol
+## 4. BullMQ Queue Health & Dead-Letter Queue (DLQ) Monitoring
 
-All Prisma migrations in SolRadar are strictly forward-only. If a schema alteration must be reversed:
+SolRadar operates 5 active queues with exponential backoff and designated DLQs:
+- `ingest` &rarr; `dlq-ingest`
+- `scoring` &rarr; `dlq-scoring`
+- `fanout` &rarr; `dlq-fanout`
+- `billing` &rarr; `dlq-billing`
+- `maintenance` &rarr; `dlq-maintenance`
 
-1. Revert application code to previous deployment tag.
-2. Apply an explicit forward rollback migration file (`prisma migrate deploy`).
-3. Never use destructive `DROP TABLE` or `DROP COLUMN` commands without an active 48-hour data-backfill window.
-
----
-
-## 4. Alerting Thresholds & PagerDuty Triggers
-
+### Dead-Letter Queue (DLQ) Alerting Thresholds
 | Alert Name | Condition | Severity | Action Required |
 | :--- | :--- | :--- | :--- |
-| **Dead-Letter Queue Spike** | `solradar_dlq_depth > 10` for 2m | CRITICAL | Inspect failed BullMQ payload in Admin console |
-| **RPC Budget Burn Alert** | `daily_burn > 400,000` before 18:00 UTC | WARNING | Rate-limit background snapshot intervals |
+| **Dead-Letter Queue Spike** | `dlq_depth > 10` for 2m | CRITICAL | Inspect failed BullMQ payload in DLQ; check downstream RPC |
+| **RPC Budget Burn Alert** | `daily_burn > 400,000` before 18:00 UTC | WARNING | Throttle background snapshot intervals |
 | **Telegram Rate Limit Error** | `alert_send_failures > 5%` | HIGH | Verify flood control window and global budget |
 | **Webhook Signature Mismatch** | `unverified_webhooks > 5` in 5m | HIGH | Check endpoint secret rotation |

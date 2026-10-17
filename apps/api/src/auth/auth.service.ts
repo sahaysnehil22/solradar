@@ -3,8 +3,20 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { PlanCode } from '@solradar/shared';
 import { env } from '../config/env.js';
-import { db, UserRecord } from '../db/store.js';
+import { prisma } from '../db/prisma.js';
 import { logger } from '../observability/index.js';
+
+export interface UserRecord {
+  id: string;
+  email: string;
+  passwordHash: string;
+  telegramId: string | null;
+  role: 'user' | 'admin' | string;
+  plan: PlanCode | string;
+  status: 'active' | 'suspended' | string;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 export interface TokenPayload {
   userId: string;
@@ -35,8 +47,8 @@ export class AuthService {
     const payload: TokenPayload = {
       userId: user.id,
       email: user.email,
-      role: user.role,
-      plan: user.plan,
+      role: (user.role as 'user' | 'admin') || 'user',
+      plan: (user.plan as PlanCode) || PlanCode.FREE,
     };
 
     const accessToken = jwt.sign(payload, env.JWT_SECRET, { expiresIn: '15m' });
@@ -90,12 +102,12 @@ export class AuthService {
     // Invalidate the used token
     family.validTokens.delete(oldRefreshToken);
 
-    const user = db.users.get(decoded.userId);
+    const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
     if (!user) {
       throw new Error('User not found');
     }
 
-    return this.generateTokens(user, decoded.familyId);
+    return this.generateTokens(user as any, decoded.familyId);
   }
 
   /**

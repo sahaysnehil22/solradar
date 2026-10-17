@@ -4,12 +4,12 @@ import {
   TokenQueryDto,
   TokenSnapshotDto,
 } from '@solradar/shared';
-import { db, TokenRecord, TokenSnapshotRecord, AlertRecord } from '../db/store.js';
+import { prisma } from '../db/prisma.js';
 import { logger } from '../observability/index.js';
 
 export interface TokenWithLatestSnapshot {
-  token: TokenRecord;
-  snapshot: TokenSnapshotRecord;
+  token: any;
+  snapshot: any;
   risk: RiskReportOutput;
 }
 
@@ -18,8 +18,7 @@ export class TokensService {
     this.seedInitialVerifiedTokens();
   }
 
-  private seedInitialVerifiedTokens() {
-    // Populate realistic initial data tokens
+  private async seedInitialVerifiedTokens() {
     const sampleMints = [
       {
         mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
@@ -128,112 +127,120 @@ export class TokensService {
       },
     ];
 
-    for (const s of sampleMints) {
-      if (!db.tokens.has(s.mint)) {
-        const token: TokenRecord = {
-          id: `tok_${s.symbol.toLowerCase()}`,
-          mint: s.mint,
-          symbol: s.symbol,
-          name: s.name,
-          decimals: s.decimals,
-          creator: 'CreatorWalletAddressPlaceholder111111111111',
-          firstSeenAt: new Date(Date.now() - 3600000),
-        };
-        db.tokens.set(s.mint, token);
+    try {
+      for (const s of sampleMints) {
+        const existing = await prisma.token.findUnique({ where: { mint: s.mint } });
+        if (!existing) {
+          const token = await prisma.token.create({
+            data: {
+              mint: s.mint,
+              symbol: s.symbol,
+              name: s.name,
+              decimals: s.decimals,
+              creator: 'CreatorWalletAddressPlaceholder111111111111',
+              firstSeenAt: new Date(Date.now() - 3600000),
+            },
+          });
 
-        const snapshot: TokenSnapshotRecord = {
-          id: `snap_${s.symbol.toLowerCase()}`,
-          tokenId: token.id,
-          price: s.price,
-          mcap: s.mcap,
-          liquidityUsd: s.liquidityUsd,
-          volume5m: s.vol5m,
-          volume1h: s.vol1h,
-          volume24h: s.vol24h,
-          buys: s.buys,
-          sells: s.sells,
-          holderCount: s.holders,
-          top10Pct: s.top10,
-          devHoldingPct: s.devHolding,
-          mintAuthRevoked: s.mintRevoked,
-          freezeAuthRevoked: s.freezeRevoked,
-          lpBurnedOrLockedPct: s.lpBurned,
-          stage: s.stage,
-          takenAt: new Date(),
-        };
-        db.snapshots.set(snapshot.id, snapshot);
+          await prisma.tokenSnapshot.create({
+            data: {
+              tokenId: token.id,
+              price: s.price,
+              mcap: s.mcap,
+              liquidityUsd: s.liquidityUsd,
+              volume5m: s.vol5m,
+              volume1h: s.vol1h,
+              volume24h: s.vol24h,
+              buys: s.buys,
+              sells: s.sells,
+              holderCount: s.holders,
+              top10Pct: s.top10,
+              devHoldingPct: s.devHolding,
+              mintAuthRevoked: s.mintRevoked,
+              freezeAuthRevoked: s.freezeRevoked,
+              lpBurnedOrLockedPct: s.lpBurned,
+              stage: s.stage,
+              takenAt: new Date(),
+            },
+          });
+        }
       }
+    } catch (e: any) {
+      logger.warn('Initial token seed handled:', e.message);
     }
   }
 
   async ingestHeliusWebhook(events: any[]) {
-    const processedAlerts: AlertRecord[] = [];
+    const processedAlerts: any[] = [];
 
     for (const evt of events) {
       // Increment system counter
-      const currentCount = db.systemCounters.get('webhook_ingest_count') || 0;
-      db.systemCounters.set('webhook_ingest_count', currentCount + 1);
+      await prisma.systemCounter.upsert({
+        where: { key: 'webhook_ingest_count' },
+        update: { value: { increment: 1 } },
+        create: { key: 'webhook_ingest_count', value: BigInt(1) },
+      });
 
       const mint = evt.mint || evt.tokenTransfers?.[0]?.mint;
       if (!mint) continue;
 
-      let token = db.tokens.get(mint);
+      let token = await prisma.token.findUnique({ where: { mint } });
       if (!token) {
-        token = {
-          id: `tok_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          mint,
-          symbol: evt.symbol || 'MEME',
-          name: evt.name || 'Solana Token',
-          decimals: evt.decimals || 6,
-          creator: evt.creator || null,
-          firstSeenAt: new Date(),
-        };
-        db.tokens.set(mint, token);
+        token = await prisma.token.create({
+          data: {
+            mint,
+            symbol: evt.symbol || 'MEME',
+            name: evt.name || 'Solana Token',
+            decimals: evt.decimals || 6,
+            creator: evt.creator || null,
+            firstSeenAt: new Date(),
+          },
+        });
       }
 
       // Snapshot creation
-      const snapshot: TokenSnapshotRecord = {
-        id: `snap_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        tokenId: token.id,
-        price: evt.priceUsd || 0.0001,
-        mcap: evt.mcapUsd || 10000,
-        liquidityUsd: evt.liquidityUsd || 5000,
-        volume5m: evt.volume5m || 1000,
-        volume1h: evt.volume1h || 2000,
-        volume24h: evt.volume24h || 5000,
-        buys: evt.buys5m || 10,
-        sells: evt.sells5m || 2,
-        holderCount: evt.holderCount || 25,
-        top10Pct: evt.top10Pct || 35,
-        devHoldingPct: evt.devHoldingPct || 2,
-        mintAuthRevoked: !!evt.mintAuthorityRevoked,
-        freezeAuthRevoked: !!evt.freezeAuthorityRevoked,
-        lpBurnedOrLockedPct: evt.lpBurnedOrLockedPct || 0,
-        stage: evt.stage || 'new',
-        takenAt: new Date(),
-      };
-      db.snapshots.set(snapshot.id, snapshot);
-
-      // Check alert trigger condition: New Launch
-      const eventKey = `launch:${mint}`;
-      if (!db.alerts.has(eventKey)) {
-        const alertRecord: AlertRecord = {
-          id: `alt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          eventKey,
-          kind: 'launch',
+      const snapshot = await prisma.tokenSnapshot.create({
+        data: {
           tokenId: token.id,
-          payload: {
-            mint,
-            symbol: token.symbol,
-            name: token.name,
-            price: snapshot.price,
-            mcap: snapshot.mcap,
-            liquidity: snapshot.liquidityUsd,
-            stage: snapshot.stage,
+          price: evt.priceUsd || 0.0001,
+          mcap: evt.mcapUsd || 10000,
+          liquidityUsd: evt.liquidityUsd || 5000,
+          volume5m: evt.volume5m || 1000,
+          volume1h: evt.volume1h || 2000,
+          volume24h: evt.volume24h || 5000,
+          buys: evt.buys5m || 10,
+          sells: evt.sells5m || 2,
+          holderCount: evt.holderCount || 25,
+          top10Pct: evt.top10Pct || 35,
+          devHoldingPct: evt.devHoldingPct || 2,
+          mintAuthRevoked: !!evt.mintAuthorityRevoked,
+          freezeAuthRevoked: !!evt.freezeAuthorityRevoked,
+          lpBurnedOrLockedPct: evt.lpBurnedOrLockedPct || 0,
+          stage: evt.stage || 'new',
+          takenAt: new Date(),
+        },
+      });
+
+      // Check alert trigger condition: New Launch with deterministic eventKey
+      const eventKey = `launch:${mint}`;
+      const existingAlert = await prisma.alert.findUnique({ where: { eventKey } });
+      if (!existingAlert) {
+        const alertRecord = await prisma.alert.create({
+          data: {
+            eventKey,
+            kind: 'launch',
+            tokenId: token.id,
+            payload: {
+              mint,
+              symbol: token.symbol,
+              name: token.name,
+              price: snapshot.price,
+              mcap: snapshot.mcap,
+              liquidity: snapshot.liquidityUsd,
+              stage: snapshot.stage,
+            },
           },
-          createdAt: new Date(),
-        };
-        db.alerts.set(eventKey, alertRecord);
+        });
         processedAlerts.push(alertRecord);
       }
     }
@@ -241,14 +248,14 @@ export class TokensService {
     return { processedCount: events.length, alertsGenerated: processedAlerts.length };
   }
 
-  queryScreener(query: TokenQueryDto): { data: TokenWithLatestSnapshot[]; total: number } {
+  async queryScreener(query: TokenQueryDto): Promise<{ data: TokenWithLatestSnapshot[]; total: number }> {
+    const tokens = await prisma.token.findMany();
     const list: TokenWithLatestSnapshot[] = [];
 
-    for (const token of db.tokens.values()) {
-      // Find latest snapshot for token
-      const snapshots = Array.from(db.snapshots.values()).filter((s) => s.tokenId === token.id);
+    for (const token of tokens) {
+      const snapshots = await prisma.tokenSnapshot.findMany({ where: { tokenId: token.id } });
       if (snapshots.length === 0) continue;
-      const latestSnapshot = snapshots.sort((a, b) => b.takenAt.getTime() - a.takenAt.getTime())[0];
+      const latestSnapshot = snapshots.sort((a: any, b: any) => new Date(b.takenAt).getTime() - new Date(a.takenAt).getTime())[0];
 
       // Filter stage
       if (query.stage !== 'all' && latestSnapshot.stage !== query.stage) {
@@ -317,8 +324,8 @@ export class TokensService {
           valB = b.risk.riskScore;
           break;
         case 'first_seen_at':
-          valA = a.token.firstSeenAt.getTime();
-          valB = b.token.firstSeenAt.getTime();
+          valA = new Date(a.token.firstSeenAt).getTime();
+          valB = new Date(b.token.firstSeenAt).getTime();
           break;
       }
       return query.sortDir === 'asc' ? valA - valB : valB - valA;
@@ -329,13 +336,13 @@ export class TokensService {
     return { data: paginated, total };
   }
 
-  getTokenDetail(mint: string): TokenWithLatestSnapshot | null {
-    const token = db.tokens.get(mint);
+  async getTokenDetail(mint: string): Promise<TokenWithLatestSnapshot | null> {
+    const token = await prisma.token.findUnique({ where: { mint } });
     if (!token) return null;
 
-    const snapshots = Array.from(db.snapshots.values()).filter((s) => s.tokenId === token.id);
+    const snapshots = await prisma.tokenSnapshot.findMany({ where: { tokenId: token.id } });
     if (snapshots.length === 0) return null;
-    const latestSnapshot = snapshots.sort((a, b) => b.takenAt.getTime() - a.takenAt.getTime())[0];
+    const latestSnapshot = snapshots.sort((a: any, b: any) => new Date(b.takenAt).getTime() - new Date(a.takenAt).getTime())[0];
 
     const risk = evaluateTokenRisk({
       mintAuthorityRevoked: latestSnapshot.mintAuthRevoked,

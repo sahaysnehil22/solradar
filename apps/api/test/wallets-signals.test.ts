@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { FastifyInstance } from 'fastify';
 import { createServer } from '../src/server.js';
-import { db } from '../src/db/store.js';
+import { prisma } from '../src/db/prisma.js';
 import { PlanCode } from '@solradar/shared';
 
 describe('Tracked Wallets, Copy Signals & Portfolio Integration', () => {
@@ -42,9 +42,11 @@ describe('Tracked Wallets, Copy Signals & Portfolio Integration', () => {
     expect(freeRes.statusCode).toBe(400);
     expect(JSON.parse(freeRes.body).error).toContain('Plan limit reached');
 
-    // Upgrade user to Scout (limit: 1)
-    const user = db.users.get(userId);
-    if (user) user.plan = PlanCode.SCOUT;
+    // Upgrade user to Scout (limit: 1) in database
+    await prisma.user.update({
+      where: { id: userId },
+      data: { plan: PlanCode.SCOUT },
+    });
 
     const scoutRes1 = await app.inject({
       method: 'POST',
@@ -112,22 +114,22 @@ describe('Tracked Wallets, Copy Signals & Portfolio Integration', () => {
       method: 'POST',
       url: '/portfolio/address',
       headers: { authorization: `Bearer ${userToken}` },
-      payload: {
-        address: 'PublicSolanaAddressTest11111111111111111111',
-        label: 'Ledger Cold Storage',
-      },
+      payload: { address: 'Fr8vQY2N1HkJ5t2qQp1u8z5iU7yL6K3P', label: 'Treasury Cold' },
     });
     expect(addRes.statusCode).toBe(200);
 
-    // Fetch portfolio
-    const getRes = await app.inject({
+    // Read portfolio
+    const portRes = await app.inject({
       method: 'GET',
       url: '/portfolio',
       headers: { authorization: `Bearer ${userToken}` },
     });
-    expect(getRes.statusCode).toBe(200);
-    const portfolio = JSON.parse(getRes.body);
-    expect(portfolio.totalValueUsd).toBeGreaterThan(0);
-    expect(portfolio.holdings.length).toBeGreaterThanOrEqual(1);
+    expect(portRes.statusCode).toBe(200);
+    const data = JSON.parse(portRes.body);
+
+    expect(data.addressesCount).toBeGreaterThanOrEqual(1);
+    expect(data.totalValueUsd).toBeGreaterThan(0);
+    expect(data.holdings).toHaveLength(3);
+    expect(data.holdings[0].symbol).toBe('BONK');
   });
 });

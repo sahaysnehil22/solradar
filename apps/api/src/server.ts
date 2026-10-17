@@ -12,7 +12,7 @@ import {
   PlanCode,
 } from '@solradar/shared';
 import { env } from './config/env.js';
-import { db, UserRecord } from './db/store.js';
+import { prisma, checkPrismaConnection } from './db/prisma.js';
 import { authService, TokenPayload } from './auth/auth.service.js';
 import { billingService } from './billing/billing.service.js';
 import { tokensService } from './tokens/tokens.service.js';
@@ -29,6 +29,9 @@ export async function createServer(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: false,
   });
+
+  // Verify database connection at startup
+  await checkPrismaConnection();
 
   // Security headers with Helmet
   await app.register(helmet, {
@@ -84,38 +87,36 @@ export async function createServer(): Promise<FastifyInstance> {
   app.post('/auth/signup', async (req, reply) => {
     const body = SignupDtoSchema.parse(req.body);
 
-    const existingUser = Array.from(db.users.values()).find((u) => u.email === body.email);
+    const existingUser = await prisma.user.findUnique({ where: { email: body.email } });
     if (existingUser) {
       return reply.status(400).send({ error: 'Email already registered' });
     }
 
     const passwordHash = await authService.hashPassword(body.password);
-    const user: UserRecord = {
-      id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      email: body.email,
-      passwordHash,
-      telegramId: null,
-      role: 'user',
-      plan: PlanCode.FREE,
-      status: 'active',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    db.users.set(user.id, user);
+    const user = await prisma.user.create({
+      data: {
+        email: body.email,
+        passwordHash,
+        telegramId: null,
+        role: 'user',
+        plan: PlanCode.FREE,
+        status: 'active',
+      },
+    });
 
     // If referral code provided, apply discounts
     if (body.referralCode) {
       await referralsService.applyReferralAtSignup(user.id, body.referralCode);
     }
 
-    const tokens = authService.generateTokens(user);
+    const tokens = authService.generateTokens(user as any);
     return { user: { id: user.id, email: user.email, plan: user.plan, role: user.role }, tokens };
   });
 
   app.post('/auth/login', async (req, reply) => {
     const body = LoginDtoSchema.parse(req.body);
 
-    const user = Array.from(db.users.values()).find((u) => u.email === body.email);
+    const user = await prisma.user.findUnique({ where: { email: body.email } });
     if (!user) {
       return reply.status(401).send({ error: 'Invalid email or password' });
     }
@@ -125,7 +126,7 @@ export async function createServer(): Promise<FastifyInstance> {
       return reply.status(401).send({ error: 'Invalid email or password' });
     }
 
-    const tokens = authService.generateTokens(user);
+    const tokens = authService.generateTokens(user as any);
     return { user: { id: user.id, email: user.email, plan: user.plan, role: user.role }, tokens };
   });
 
@@ -151,18 +152,17 @@ export async function createServer(): Promise<FastifyInstance> {
       return reply.status(400).send({ error: 'Invalid Telegram initData verification signature' });
     }
 
-    const user = db.users.get(session.userId);
-    if (user) {
-      user.telegramId = String(verification.user.id);
-      user.updatedAt = new Date();
-    }
+    await prisma.user.update({
+      where: { id: session.userId },
+      data: { telegramId: BigInt(verification.user.id) },
+    });
 
     return { success: true, telegramId: verification.user.id, username: verification.user.username };
   });
 
   app.get('/auth/me', async (req, reply) => {
     const session = await authenticate(req, reply);
-    const user = db.users.get(session.userId);
+    const user = await prisma.user.findUnique({ where: { id: session.userId } });
     if (!user) return reply.status(404).send({ error: 'User not found' });
 
     return {
@@ -170,7 +170,7 @@ export async function createServer(): Promise<FastifyInstance> {
       email: user.email,
       role: user.role,
       plan: user.plan,
-      telegramId: user.telegramId,
+      telegramId: user.telegramId ? String(user.telegramId) : null,
       createdAt: user.createdAt,
     };
   });
@@ -212,7 +212,7 @@ export async function createServer(): Promise<FastifyInstance> {
 
   app.get('/billing/status', async (req, reply) => {
     const session = await authenticate(req, reply);
-    const sub = Array.from(db.subscriptions.values()).find((s) => s.userId === session.userId);
+    const sub = await prisma.subscription.findFirst({ where: { userId: session.userId } });
 
     return {
       activeSubscription: sub || null,
@@ -226,17 +226,17 @@ export async function createServer(): Promise<FastifyInstance> {
   // 4. Token Screener & Pulse Feed
   app.get('/tokens/screener', async (req) => {
     const query = TokenQueryDtoSchema.parse(req.query);
-    return tokensService.queryScreener(query);
+    return await tokensService.queryScreener(query);
   });
 
   app.get('/tokens/pulse', async (req) => {
     const query = TokenQueryDtoSchema.parse({ ...(req.query as any), limit: 20 });
-    return tokensService.queryScreener(query);
+    return await tokensService.queryScreener(query);
   });
 
   app.get('/tokens/:mint', async (req, reply) => {
     const mint = (req.params as any).mint;
-    const detail = tokensService.getTokenDetail(mint);
+    const detail = await tokensService.getTokenDetail(mint);
     if (!detail) {
       return reply.status(404).send({ error: 'Token not found' });
     }
@@ -252,7 +252,7 @@ export async function createServer(): Promise<FastifyInstance> {
   // 5. Tracked Wallets & Copy Signals
   app.get('/wallets/tracked', async (req, reply) => {
     const session = await authenticate(req, reply);
-    return walletsService.getTrackedWallets(session.userId);
+    return await walletsService.getTrackedWallets(session.userId);
   });
 
   app.post('/wallets/track', async (req, reply) => {
@@ -278,13 +278,13 @@ export async function createServer(): Promise<FastifyInstance> {
 
   app.post('/wallets/trade-webhook', async (req) => {
     const body = req.body as any;
-    return walletsService.recordWalletTrade(body);
+    return await walletsService.recordWalletTrade(body);
   });
 
   // 6. Portfolio (Read-Only)
   app.get('/portfolio', async (req, reply) => {
     const session = await authenticate(req, reply);
-    return walletsService.getPortfolioSummary(session.userId);
+    return await walletsService.getPortfolioSummary(session.userId);
   });
 
   app.post('/portfolio/address', async (req, reply) => {
@@ -299,7 +299,7 @@ export async function createServer(): Promise<FastifyInstance> {
   app.get('/referrals', async (req, reply) => {
     const session = await authenticate(req, reply);
     const code = await referralsService.getOrCreateReferralCode(session.userId);
-    const stats = referralsService.getUserReferralStats(session.userId);
+    const stats = await referralsService.getUserReferralStats(session.userId);
 
     return {
       referralCode: code,
@@ -315,14 +315,30 @@ export async function createServer(): Promise<FastifyInstance> {
       return reply.status(403).send({ error: 'Admin access required' });
     }
 
+    const [usersCount, tokensCount, alertsCount, deliveriesCount, paymentEventsCount, activeSubscriptions, systemCounters] =
+      await Promise.all([
+        prisma.user.count(),
+        prisma.token.count(),
+        prisma.alert.count(),
+        prisma.alertDelivery.count(),
+        prisma.paymentEvent.count(),
+        prisma.subscription.count({ where: { status: 'active' } }),
+        prisma.systemCounter.findMany(),
+      ]);
+
+    const countersMap: Record<string, number> = {};
+    for (const c of systemCounters) {
+      countersMap[c.key] = Number(c.value);
+    }
+
     return {
-      usersCount: db.users.size,
-      tokensCount: db.tokens.size,
-      alertsCount: db.alerts.size,
-      deliveriesCount: db.alertDeliveries.size,
-      paymentEventsCount: db.paymentEvents.size,
-      systemCounters: Object.fromEntries(db.systemCounters.entries()),
-      activeSubscriptions: db.subscriptions.size,
+      usersCount,
+      tokensCount,
+      alertsCount,
+      deliveriesCount,
+      paymentEventsCount,
+      systemCounters: countersMap,
+      activeSubscriptions,
     };
   });
 
