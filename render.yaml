@@ -1,0 +1,81 @@
+services:
+  # 1. NestJS / Fastify API Web Service
+  - type: web
+    name: solradar-api
+    env: node
+    plan: standard
+    buildCommand: npm install && npm run build --workspace=packages/shared && npm run build --workspace=apps/api
+    startCommand: npm run start --workspace=apps/api
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: solradar-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: solradar-redis
+          property: connectionString
+      - key: BILLING_PROVIDER
+        value: noop
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: HELIUS_WEBHOOK_SECRET
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+
+  # 2. BullMQ Queue Worker Service
+  - type: worker
+    name: solradar-worker
+    env: node
+    plan: standard
+    buildCommand: npm install && npm run build --workspace=packages/shared && npm run build --workspace=apps/api
+    startCommand: node apps/api/dist/worker.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: solradar-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: solradar-redis
+          property: connectionString
+
+  # 3. grammY Telegram Bot Service
+  - type: worker
+    name: solradar-bot
+    env: node
+    plan: standard
+    buildCommand: npm install && npm run build --workspace=packages/shared && npm run build --workspace=apps/bot
+    startCommand: node apps/bot/dist/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_BASE_URL
+        fromService:
+          type: web
+          name: solradar-api
+          property: host
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+
+databases:
+  - name: solradar-db
+    plan: standard
+    postgresMajorVersion: 16
+
+redis:
+  - name: solradar-redis
+    plan: standard
+    ipAllowList: [] # internal access only

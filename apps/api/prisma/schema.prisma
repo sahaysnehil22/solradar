@@ -1,0 +1,362 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. Identity & Users Table
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String    @map("password_hash")
+  telegramId    BigInt?   @unique @map("telegram_id")
+  role          String    @default("user") // "user" | "admin"
+  plan          String    @default("scout") // "free" | "scout" | "hunter"
+  status        String    @default("active") // "active" | "suspended"
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  telegramAccounts    TelegramAccount[]
+  subscriptions       Subscription[]
+  payments            Payment[]
+  referredUsers       Referral[]          @relation("ReferrerRelation")
+  referredBy          Referral[]          @relation("RefereeRelation")
+  referralCredits     ReferralCredit[]
+  trackedWallets      TrackedWallet[]
+  alertDeliveries     AlertDelivery[]
+  watchlists          Watchlist[]
+  portfolioAddresses  PortfolioAddress[]
+  portfolioSnapshots  PortfolioSnapshot[]
+  auditLogs           AuditLog[]
+
+  @@map("users")
+}
+
+// 2. Telegram Accounts Linked to User
+model TelegramAccount {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  telegramId BigInt   @unique @map("telegram_id")
+  username   String?
+  linkedAt   DateTime @default(now()) @map("linked_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("telegram_accounts")
+}
+
+// 3. Subscription Plans
+model Plan {
+  id          String   @id @default(uuid())
+  code        String   @unique // "scout" | "hunter"
+  name        String
+  priceCents  Int      @map("price_cents")
+  interval    String   @default("month") // "month" | "year"
+  features    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+// 4. Subscriptions
+model Subscription {
+  id                   String    @id @default(uuid())
+  userId               String    @map("user_id")
+  stripeSubscriptionId String    @unique @map("stripe_subscription_id")
+  planId               String    @map("plan_id")
+  status               String    @default("active") // "active" | "canceled" | "past_due"
+  currentPeriodEnd     DateTime  @map("current_period_end")
+  cancelAtPeriodEnd    Boolean   @default(false) @map("cancel_at_period_end")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan Plan @relation(fields: [planId], references: [id])
+
+  @@index([userId])
+  @@index([planId])
+  @@map("subscriptions")
+}
+
+// 5. Payments History
+model Payment {
+  id                    String   @id @default(uuid())
+  userId                String   @map("user_id")
+  stripePaymentIntentId String   @unique @map("stripe_payment_intent_id")
+  amountCents           Int      @map("amount_cents")
+  currency              String   @default("usd")
+  status                String   @default("succeeded") // "succeeded" | "failed"
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("payments")
+}
+
+// 6. Payment Events (Idempotency Key for Webhooks)
+model PaymentEvent {
+  id            String   @id @default(uuid())
+  stripeEventId String   @unique @map("stripe_event_id")
+  type          String
+  payload       Json?    @default("{}")
+  processedAt   DateTime @default(now()) @map("processed_at")
+
+  @@map("payment_events")
+}
+
+// 7. Referrals
+model Referral {
+  id             String    @id @default(uuid())
+  code           String    @unique
+  referrerUserId String    @map("referrer_user_id")
+  refereeUserId  String?   @map("referee_user_id")
+  status         String    @default("pending") // "pending" | "applied"
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  referrer User  @relation("ReferrerRelation", fields: [referrerUserId], references: [id], onDelete: Cascade)
+  referee  User? @relation("RefereeRelation", fields: [refereeUserId], references: [id], onDelete: SetNull)
+  credits  ReferralCredit[]
+
+  @@index([referrerUserId])
+  @@index([refereeUserId])
+  @@map("referrals")
+}
+
+// 8. Referral Credits (Race-Safe Discount Ledger)
+model ReferralCredit {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  referralId    String   @map("referral_id")
+  percentOff    Int      @default(20) @map("percent_off")
+  monthsTotal   Int      @default(3) @map("months_total")
+  monthsApplied Int      @default(0) @map("months_applied")
+  status        String   @default("active") // "active" | "exhausted"
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referral Referral @relation(fields: [referralId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([referralId])
+  @@map("referral_credits")
+}
+
+// 9. Tracked Wallets (Smart Money / Copy-Trade Signals)
+model TrackedWallet {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  address   String
+  label     String   @default("Smart Trader")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trades WalletTrade[]
+
+  @@unique([userId, address])
+  @@index([userId])
+  @@index([address])
+  @@map("tracked_wallets")
+}
+
+// 10. Wallet Trades (Idempotent Signature Drop)
+model WalletTrade {
+  id              String   @id @default(uuid())
+  trackedWalletId String   @map("tracked_wallet_id")
+  signature       String   @unique
+  mint            String
+  side            String   // "buy" | "sell"
+  amountUsd       Float    @map("amount_usd")
+  price           Float
+  slot            BigInt
+  detectedAt      DateTime @default(now()) @map("detected_at")
+
+  trackedWallet TrackedWallet @relation(fields: [trackedWalletId], references: [id], onDelete: Cascade)
+
+  @@index([trackedWalletId])
+  @@index([mint])
+  @@map("wallet_trades")
+}
+
+// 11. Tokens
+model Token {
+  id            String   @id @default(uuid())
+  mint          String   @unique
+  symbol        String
+  name          String
+  decimals      Int      @default(6)
+  creator       String?
+  createdAtSlot BigInt?  @map("created_at_slot")
+  firstSeenAt   DateTime @default(now()) @map("first_seen_at")
+
+  snapshots   TokenSnapshot[]
+  riskReports RiskReport[]
+  alerts      Alert[]
+  watchlists  Watchlist[]
+
+  @@index([mint])
+  @@index([firstSeenAt])
+  @@map("tokens")
+}
+
+// 12. Token Snapshots (Append-Only Market Data)
+model TokenSnapshot {
+  id                  String   @id @default(uuid())
+  tokenId             String   @map("token_id")
+  price               Float
+  mcap                Float
+  liquidityUsd        Float    @map("liquidity_usd")
+  volume5m            Float    @default(0) @map("volume_5m")
+  volume1h            Float    @default(0) @map("volume_1h")
+  volume24h           Float    @default(0) @map("volume_24h")
+  buys                Int      @default(0)
+  sells               Int      @default(0)
+  holderCount         Int      @default(0) @map("holder_count")
+  top10Pct            Float    @default(0) @map("top10_pct")
+  devHoldingPct       Float    @default(0) @map("dev_holding_pct")
+  mintAuthRevoked     Boolean  @default(false) @map("mint_auth_revoked")
+  freezeAuthRevoked   Boolean  @default(false) @map("freeze_auth_revoked")
+  lpBurnedOrLockedPct Float    @default(0) @map("lp_burned_or_locked_pct")
+  stage               String   @default("new") // "new" | "curve" | "migrated"
+  takenAt             DateTime @default(now()) @map("taken_at")
+
+  token Token @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@index([tokenId, takenAt])
+  @@index([takenAt])
+  @@map("token_snapshots")
+}
+
+// 13. Risk Reports
+model RiskReport {
+  id             String   @id @default(uuid())
+  tokenId        String   @map("token_id")
+  momentumScore  Int      @map("momentum_score")
+  riskScore      Int      @map("risk_score")
+  confidence     String   // "HIGH" | "MEDIUM" | "LOW"
+  flags          Json     @default("[]")
+  modelVersion   String   @default("1.0.0") @map("model_version")
+  scoredAt       DateTime @default(now()) @map("scored_at")
+
+  token Token @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@unique([tokenId, modelVersion])
+  @@index([tokenId])
+  @@index([riskScore])
+  @@map("risk_reports")
+}
+
+// 14. Alerts
+model Alert {
+  id        String   @id @default(uuid())
+  eventKey  String   @unique @map("event_key")
+  kind      String   // "launch" | "spike" | "whale" | "wallet_trade" | "migration"
+  tokenId   String?  @map("token_id")
+  payload   Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  token      Token?          @relation(fields: [tokenId], references: [id], onDelete: SetNull)
+  deliveries AlertDelivery[]
+
+  @@index([eventKey])
+  @@index([tokenId])
+  @@map("alerts")
+}
+
+// 15. Alert Deliveries (Exactly-Once Idempotency Guarantee Table)
+model AlertDelivery {
+  id      String   @id @default(uuid())
+  alertId String   @map("alert_id")
+  userId  String   @map("user_id")
+  channel String   @default("telegram") // "telegram" | "webhook"
+  status  String   @default("sent") // "sent" | "failed"
+  sentAt  DateTime @default(now()) @map("sent_at")
+
+  alert Alert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, alertId])
+  @@index([userId])
+  @@index([alertId])
+  @@map("alert_deliveries")
+}
+
+// 16. Watchlists
+model Watchlist {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  tokenId   String   @map("token_id")
+  filters   Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token Token @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tokenId])
+  @@index([userId])
+  @@index([tokenId])
+  @@map("watchlists")
+}
+
+// 17. Portfolio Addresses (Read-Only Public Key Tracker)
+model PortfolioAddress {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  address   String
+  label     String   @default("Trading Wallet")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, address])
+  @@index([userId])
+  @@map("portfolio_addresses")
+}
+
+// 18. Portfolio Snapshots (Hourly Append-Only Balance History)
+model PortfolioSnapshot {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  totalValueUsd Float    @map("total_value_usd")
+  perToken      Json     @default("[]") @map("per_token")
+  takenAt       DateTime @default(now()) @map("taken_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, takenAt])
+  @@map("portfolio_snapshots")
+}
+
+// 19. Audit Logs (Append-Only Log for Billing and Admin Actions)
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorUserId String?  @map("actor_user_id")
+  action      String
+  entity      String
+  entityId    String   @map("entity_id")
+  meta        Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId])
+  @@index([entity, entityId])
+  @@map("audit_logs")
+}
+
+// 20. System Counters (RPC Budget, Webhooks, Fanout Stats)
+model SystemCounter {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     BigInt   @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_counters")
+}
