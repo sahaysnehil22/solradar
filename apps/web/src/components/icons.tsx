@@ -2,11 +2,19 @@ import React from 'react';
 
 export function RadarIcon({ size = 16, className = '' }: { size?: number; className?: string }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <circle cx="12" cy="12" r="9" />
-      <circle cx="12" cy="12" r="4.5" />
-      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
-      <line x1="12" y1="12" x2="18" y2="6" />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <style>{`
+        .radar-sweep { transform-origin: 12px 12px; animation: radar-rotate 3s linear infinite; }
+        @keyframes radar-rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .radar-blip { animation: radar-blink 1.5s ease-in-out infinite; }
+        @keyframes radar-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+      `}</style>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+      <circle cx="12" cy="12" r="4.5" stroke="currentColor" strokeWidth="1.5" opacity="0.6" />
+      <g className="radar-sweep">
+        <path d="M12 12 L12 3 A9 9 0 0 1 18.4 5.6 Z" fill="currentColor" opacity="0.7" />
+      </g>
+      <circle className="radar-blip" cx="12" cy="12" r="2" fill="currentColor" stroke="none" />
     </svg>
   );
 }
