@@ -814,6 +814,18 @@ export async function checkPrismaConnection(): Promise<boolean> {
     await realPrisma.$connect();
     useRealPrisma = true;
     logger.info('Connected successfully to PostgreSQL database via Prisma');
+
+    // Blocker 1: Ensure real data pipeline migration columns exist idempotently
+    try {
+      await realPrisma.$executeRawUnsafe(`
+        ALTER TABLE "tokens" ADD COLUMN IF NOT EXISTS "image_url" TEXT;
+        ALTER TABLE "tokens" ADD COLUMN IF NOT EXISTS "price_history" JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE "token_snapshots" ADD COLUMN IF NOT EXISTS "top_holders" JSONB DEFAULT '[]'::jsonb;
+      `);
+      logger.info('Verified and ensured real data pipeline database columns (tokens.image_url, tokens.price_history, token_snapshots.top_holders).');
+    } catch (migErr: any) {
+      logger.warn('Non-fatal: Database column verification handled:', migErr.message);
+    }
   } catch (err: any) {
     useRealPrisma = false;
     if (env.NODE_ENV === 'production') {

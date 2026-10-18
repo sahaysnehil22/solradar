@@ -21,6 +21,7 @@ const EnvSchema = z.object({
   HELIUS_API_KEY: z.string().optional().default(''),
   HELIUS_RPC_URL: z.string().optional().default('https://mainnet.helius-rpc.com'),
   HELIUS_WEBHOOK_SECRET: z.string().optional().default('test_helius_secret'),
+  HELIUS_WEBHOOK_ID: z.string().optional().default('4fbc8fb3-863e-47e2-b164-b24afb4ae0a3'),
   TELEGRAM_BOT_TOKEN: z.string().optional().default('dummy_token_dev'),
 });
 

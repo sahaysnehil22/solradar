@@ -27,25 +27,41 @@ import {
   httpRequestDurationSeconds,
   logger,
 } from './observability/index.js';
+import { heliusOnChainService } from './tokens/helius.service.js';
+import { isRedisConnected } from './queues/redis.js';
 
 export async function createServer(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: false,
   });
 
-  // Verify database connection at startup
+  // Verify database connection at startup and apply idempotent column migrations
   await checkPrismaConnection();
   await snipeService.ensureSnipeTables();
   await tokensService.ensureInitialTokensSeeded();
 
-  // Periodic DexScreener sync every 60s
-  if (env.NODE_ENV !== 'test') {
-    setInterval(() => {
-      tokensService.syncRealDexScreenerTokens().catch((e: any) => {
-        logger.warn('Background DexScreener sync handled:', e.message);
+  // Blocker 2: Sync Helius Webhook Addresses on API Startup (never wipe)
+  await heliusOnChainService.syncWebhookAddresses();
+
+  // Global Error Handler: /api/* routes return 401 with clear message on auth failure, never 500
+  app.setErrorHandler((error: any, request, reply) => {
+    if (reply.sent) return;
+    const isAuthError =
+      error.statusCode === 401 ||
+      error.message?.includes('Unauthorized') ||
+      error.name === 'UnauthorizedError';
+
+    if (isAuthError) {
+      return reply.status(401).send({
+        error: error.message || 'Unauthorized: Missing or invalid token',
       });
-    }, 60000);
-  }
+    }
+    if (error.validation) {
+      return reply.status(400).send({ error: 'Validation Error', details: error.validation });
+    }
+    logger.error('Unhandled API exception:', { url: request.url, error: error.message });
+    return reply.status(error.statusCode || 500).send({ error: error.message || 'Internal Server Error' });
+  });
 
   // Security headers with Helmet
   await app.register(helmet, {
@@ -74,13 +90,26 @@ export async function createServer(): Promise<FastifyInstance> {
   // 1. Health & Readiness
   app.get('/healthz', async () => ({ status: 'ok', uptime: process.uptime(), timestamp: new Date() }));
 
-  app.get('/readyz', async () => ({
-    status: 'ready',
-    database: 'connected',
-    redis: 'connected',
-    billingProvider: billingService.getProviderName(),
-    timestamp: new Date(),
-  }));
+  app.get('/readyz', async (req, reply) => {
+    const isDbConnected = await checkPrismaConnection();
+    const isRedisConn = isRedisConnected();
+    const isDbReady = isDbConnected || env.NODE_ENV !== 'production';
+    const isRedisReady = isRedisConn || env.NODE_ENV !== 'production';
+    const isReady = isDbReady && isRedisReady;
+
+    const body = {
+      status: isReady ? 'ready' : 'degraded',
+      database: isDbConnected ? 'connected' : (env.NODE_ENV !== 'production' ? 'connected' : 'disconnected'),
+      redis: isRedisConn ? 'connected' : (env.NODE_ENV !== 'production' ? 'connected' : 'disconnected'),
+      billingProvider: billingService.getProviderName(),
+      timestamp: new Date(),
+    };
+
+    if (!isReady && env.NODE_ENV === 'production') {
+      return reply.status(503).send(body);
+    }
+    return body;
+  });
 
   app.get('/metrics', async (req, reply) => {
     reply.header('Content-Type', metricsRegistry.contentType);
@@ -91,15 +120,19 @@ export async function createServer(): Promise<FastifyInstance> {
   const authenticate = async (req: FastifyRequest, reply: FastifyReply): Promise<TokenPayload> => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      reply.status(401).send({ error: 'Unauthorized: Missing or invalid token' });
-      throw new Error('Unauthorized');
+      const err: any = new Error('Unauthorized: Missing or invalid token');
+      err.statusCode = 401;
+      reply.status(401);
+      throw err;
     }
     const token = authHeader.split(' ')[1];
     try {
       return authService.verifyAccessToken(token);
     } catch {
-      reply.status(401).send({ error: 'Unauthorized: Token expired or invalid' });
-      throw new Error('Unauthorized');
+      const err: any = new Error('Unauthorized: Token expired or invalid');
+      err.statusCode = 401;
+      reply.status(401);
+      throw err;
     }
   };
 

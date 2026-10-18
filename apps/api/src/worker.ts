@@ -11,7 +11,7 @@ import {
   maintenanceQueue,
 } from './queues/index.js';
 import { getRedisClient, isRedisConnected, acquireDistributedLock } from './queues/redis.js';
-import { prisma } from './db/prisma.js';
+import { prisma, checkPrismaConnection } from './db/prisma.js';
 import { logger } from './observability/index.js';
 import { tokensService } from './tokens/tokens.service.js';
 import { walletsService } from './wallets/wallets.service.js';
@@ -26,6 +26,8 @@ export class BackgroundWorker {
     if (this.isRunning) return;
     this.isRunning = true;
     logger.info('SolRadar BullMQ Worker Host starting...');
+
+    await checkPrismaConnection();
 
     const connection = getRedisClient();
 

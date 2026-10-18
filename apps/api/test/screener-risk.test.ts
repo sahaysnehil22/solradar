@@ -7,6 +7,40 @@ describe('Discovery Screener & Risk Model API', () => {
 
   beforeAll(async () => {
     app = await createServer();
+    await app.inject({
+      method: 'POST',
+      url: '/tokens/webhook/helius',
+      payload: [
+        {
+          mint: 'ScreenerSeedMint11111111111111111111111111',
+          symbol: 'SEEDA',
+          name: 'Seed Token Alpha',
+          priceUsd: 0.002,
+          mcapUsd: 120000,
+          liquidityUsd: 35000,
+          holderCount: 220,
+          top10Pct: 24.5,
+          mintAuthorityRevoked: true,
+          freezeAuthorityRevoked: true,
+          lpBurnedOrLockedPct: 100,
+          stage: 'migrated',
+        },
+        {
+          mint: 'ScreenerSeedMint22222222222222222222222222',
+          symbol: 'SEEDB',
+          name: 'Seed Token Beta',
+          priceUsd: 0.0005,
+          mcapUsd: 40000,
+          liquidityUsd: 8000,
+          holderCount: 45,
+          top10Pct: 65.0,
+          mintAuthorityRevoked: false,
+          freezeAuthorityRevoked: false,
+          lpBurnedOrLockedPct: 20,
+          stage: 'curve',
+        },
+      ],
+    });
   });
 
   afterAll(async () => {

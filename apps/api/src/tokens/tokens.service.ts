@@ -17,38 +17,23 @@ export interface TokenWithLatestSnapshot {
   sparkline?: number[];
 }
 
-export const REAL_SOLANA_MEME_MINTS = [
-  'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', // WIF
-  'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', // BONK
-  '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr', // POPCAT
-  '9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump', // FARTCOIN
-  'CzLSujWBLFsSjncfkh59rQDqJgCSwUiUiMiUZPrpump', // GOAT
-  '2qEHjDLDLbuBgRYvsxhc5D6uDWAivNFZGan56P1tpump', // PNUT
-  'Df6yfrKC8kZE3KNkrHERKzAetSxbrWeniQfyJY4Jpump', // CHILLGUY
-  'ED5nyyWEzpPPiWimP8vYm7sD7TD3LAt3Q3gRTWHzPJBY', // MOODENG
-  'GJAFwWjJ3vnTsrQVabjBVK2TYB1YtRCQXQ28Lvfvpump', // ACT
-  'HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC', // AI16Z
-  '8x5VqbHA8D7NkD52uNuS5nnt3PwA8pLD34ymskeSo2Wn', // ZEREBRO
-  'KENJSUYLASHUMfHyy5o4Hp2FdNqZg1AsUPhfH2kYvEP', // GRIFFAIN
-  'MEW1gQWJ3nEXg2qgEriKu7FAFj79PHvQVREQUzScPP5', // MEW
-];
-
 export class TokensService {
-  private isSeeding = false;
   constructor() {
-    // Startup seeding is orchestrated after database connection check
+    // Database-backed live pipeline only
   }
 
+  /**
+   * Production Hardening:
+   * Discover/Pulse must show only DB-backed live data.
+   * Purges any legacy dummy tokens without inserting fake demo data.
+   */
   async ensureInitialTokensSeeded() {
-    if (this.isSeeding) return;
-    this.isSeeding = true;
     try {
-      // 1. Purge legacy dummy $MEME / "Solana Token" rows that flooded the database
       const dummyCount = await prisma.token.count({
         where: { OR: [{ symbol: 'MEME' }, { name: 'Solana Token' }] },
       });
       if (dummyCount > 0) {
-        logger.info(`Purging ${dummyCount} dummy MEME tokens from database...`);
+        logger.info(`Purging ${dummyCount} legacy dummy tokens from database...`);
         try {
           await prisma.tokenSnapshot.deleteMany({
             where: { token: { OR: [{ symbol: 'MEME' }, { name: 'Solana Token' }] } },
@@ -57,462 +42,50 @@ export class TokensService {
             where: { OR: [{ symbol: 'MEME' }, { name: 'Solana Token' }] },
           });
         } catch (delErr: any) {
-          logger.warn('Error purging legacy dummy tokens:', delErr.message);
+          logger.warn('Non-fatal error purging legacy dummy tokens:', delErr.message);
         }
-      }
-
-      // 2. Sync real live Solana data from DexScreener
-      await this.syncRealDexScreenerTokens();
-
-      // 3. Fallback verification: ensure minimum token pool is seeded
-      const count = await prisma.token.count({
-        where: { NOT: { OR: [{ symbol: 'MEME' }, { name: 'Solana Token' }] } },
-      });
-      if (count < 15) {
-        await this.seedInitialVerifiedTokens();
       }
     } catch (err: any) {
-      logger.warn('Seed verification handled:', err.message);
-    } finally {
-      this.isSeeding = false;
+      logger.warn('Token table verification handled:', err.message);
     }
   }
 
-  async syncRealDexScreenerTokens() {
-    try {
-      const mintsToFetch = new Set<string>(REAL_SOLANA_MEME_MINTS);
-
-      // Try fetching latest trending Solana token profiles from DexScreener
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 4000);
-        const res = await fetch('https://api.dexscreener.com/token-profiles/latest/v1', { signal: controller.signal });
-        clearTimeout(timeout);
-        if (res.ok) {
-          const profiles: any[] = await res.json();
-          const solanaProfiles = (profiles || []).filter((p: any) => p.chainId === 'solana');
-          for (const p of solanaProfiles.slice(0, 15)) {
-            if (p.tokenAddress) mintsToFetch.add(p.tokenAddress);
-          }
-        }
-      } catch {}
-
-      // Batch query DexScreener token pairs (up to 30 per chunk)
-      const mintList = Array.from(mintsToFetch);
-      const chunkSize = 25;
-      for (let i = 0; i < mintList.length; i += chunkSize) {
-        const chunk = mintList.slice(i, i + chunkSize);
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 4000);
-          const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${chunk.join(',')}`, { signal: controller.signal });
-          clearTimeout(timeout);
-          if (!res.ok) continue;
-          const data: any = await res.json();
-          const pairs: any[] = data.pairs || [];
-
-          // Group by mint, picking the pair with the deepest liquidity
-          const bestPairByMint = new Map<string, any>();
-          for (const pair of pairs) {
-            if (pair.chainId !== 'solana') continue;
-            const mint = pair.baseToken?.address;
-            if (!mint) continue;
-            const cur = bestPairByMint.get(mint);
-            if (!cur || (pair.liquidity?.usd || 0) > (cur.liquidity?.usd || 0)) {
-              bestPairByMint.set(mint, pair);
-            }
-          }
-
-          for (const [mint, pair] of bestPairByMint.entries()) {
-            const rawSymbol = (pair.baseToken?.symbol || 'SOL').trim().replace(/^\$/, '');
-            const symbol = rawSymbol.toUpperCase();
-            const name = pair.baseToken?.name || `${symbol} Token`;
-            const price = parseFloat(pair.priceUsd) || 0.0001;
-            const mcap = pair.marketCap || pair.fdv || 100000;
-            const liquidity = pair.liquidity?.usd || 10000;
-            const vol5m = pair.volume?.m5 || 5000;
-            const vol1h = pair.volume?.h1 || 25000;
-            const vol24h = pair.volume?.h24 || 100000;
-            const buys = pair.txns?.m5?.buys || 12;
-            const sells = pair.txns?.m5?.sells || 6;
-            const isPump = mint.endsWith('pump') || pair.dexId === 'pumpswap';
-            const stage = isPump && liquidity < 60000 ? 'curve' : 'migrated';
-            const imageUrl = normalizeImageUrl(pair.info?.imageUrl);
-
-            // Construct real historical price trajectory from DexScreener priceChange
-            const m5Chg = pair.priceChange?.m5 ?? 0;
-            const h1Chg = pair.priceChange?.h1 ?? 0;
-            const h6Chg = pair.priceChange?.h6 ?? 0;
-            const h24Chg = pair.priceChange?.h24 ?? 0;
-            const nowTime = Date.now();
-            const priceHistory = [
-              { price: price / (1 + h24Chg / 100 || 1), takenAt: new Date(nowTime - 86400000).toISOString() },
-              { price: price / (1 + h6Chg / 100 || 1), takenAt: new Date(nowTime - 21600000).toISOString() },
-              { price: price / (1 + h1Chg / 100 || 1), takenAt: new Date(nowTime - 3600000).toISOString() },
-              { price: price / (1 + m5Chg / 100 || 1), takenAt: new Date(nowTime - 300000).toISOString() },
-              { price, takenAt: new Date(nowTime).toISOString() },
-            ];
-
-            let token = await prisma.token.findUnique({ where: { mint } });
-            if (!token) {
-              token = await prisma.token.create({
-                data: {
-                  mint,
-                  symbol,
-                  name,
-                  imageUrl: imageUrl || null,
-                  decimals: 6,
-                  priceHistory,
-                  firstSeenAt: new Date(pair.pairCreatedAt ? Number(pair.pairCreatedAt) : Date.now() - 3600000),
-                },
-              });
-            } else {
-              const updateData: any = {};
-              if (symbol && token.symbol !== symbol) updateData.symbol = symbol;
-              if (name && token.name !== name) updateData.name = name;
-              if (imageUrl && !token.imageUrl) updateData.imageUrl = imageUrl;
-              updateData.priceHistory = priceHistory;
-              try {
-                token = await prisma.token.update({
-                  where: { id: token.id },
-                  data: updateData,
-                });
-              } catch {}
-            }
-
-            await prisma.tokenSnapshot.create({
-              data: {
-                tokenId: token.id,
-                price,
-                mcap,
-                liquidityUsd: liquidity,
-                volume5m: vol5m,
-                volume1h: vol1h,
-                volume24h: vol24h,
-                buys,
-                sells,
-                holderCount: Math.min(150000, Math.max(100, Math.round(mcap / 12000))),
-                top10Pct: stage === 'migrated' ? 18.5 : 32.0,
-                devHoldingPct: stage === 'migrated' ? 0.2 : 2.1,
-                mintAuthRevoked: true,
-                freezeAuthRevoked: true,
-                lpBurnedOrLockedPct: stage === 'migrated' ? 100 : 75,
-                stage,
-                takenAt: new Date(),
-              },
-            });
-          }
-        } catch (chunkErr: any) {
-          logger.warn('Error fetching DexScreener token chunk:', chunkErr.message);
-        }
-      }
-      logger.info('Synced real Solana token intelligence from DexScreener');
-    } catch (err: any) {
-      logger.warn('DexScreener sync failed:', err.message);
-    }
-  }
-
-  private async seedInitialVerifiedTokens() {
-    const flagshipTokens = [
-      {
-        mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
-        symbol: 'BONK',
-        name: 'Bonk',
-        imageUrl: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263/logo.png',
-        decimals: 5,
-        price: 0.0000214,
-        mcap: 1450000000,
-        liquidityUsd: 18500000,
-        vol5m: 125000,
-        vol1h: 1800000,
-        vol24h: 34000000,
-        buys: 420,
-        sells: 310,
-        holders: 780000,
-        top10: 18.5,
-        devHolding: 0.1,
-        mintRevoked: true,
-        freezeRevoked: true,
-        lpBurned: 100,
-        stage: 'migrated' as const,
-        ageMinutes: 7200,
-      },
-      {
-        mint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
-        symbol: 'WIF',
-        name: 'dogwifhat',
-        imageUrl: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm/logo.png',
-        decimals: 6,
-        price: 2.38,
-        mcap: 2380000000,
-        liquidityUsd: 32000000,
-        vol5m: 280000,
-        vol1h: 3100000,
-        vol24h: 85000000,
-        buys: 680,
-        sells: 590,
-        holders: 195000,
-        top10: 22.1,
-        devHolding: 0.0,
-        mintRevoked: true,
-        freezeRevoked: true,
-        lpBurned: 100,
-        stage: 'migrated' as const,
-        ageMinutes: 4800,
-      },
-      {
-        mint: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',
-        symbol: 'POPCAT',
-        name: 'Popcat',
-        imageUrl: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr/logo.png',
-        decimals: 9,
-        price: 1.42,
-        mcap: 1390000000,
-        liquidityUsd: 14200000,
-        vol5m: 95000,
-        vol1h: 1200000,
-        vol24h: 22000000,
-        buys: 310,
-        sells: 280,
-        holders: 92000,
-        top10: 26.4,
-        devHolding: 0.0,
-        mintRevoked: true,
-        freezeRevoked: true,
-        lpBurned: 100,
-        stage: 'migrated' as const,
-        ageMinutes: 3600,
-      },
-      {
-        mint: 'MEW1gQWJ3nEXg2qgEriKu7FAFj79PHvQVREQUzScPP5',
-        symbol: 'MEW',
-        name: 'cat in a dogs world',
-        imageUrl: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/MEW1gQWJ3nEXg2qgEriKu7FAFj79PHvQVREQUzScPP5/logo.png',
-        decimals: 5,
-        price: 0.0094,
-        mcap: 830000000,
-        liquidityUsd: 11000000,
-        vol5m: 82000,
-        vol1h: 940000,
-        vol24h: 16500000,
-        buys: 290,
-        sells: 210,
-        holders: 140000,
-        top10: 24.2,
-        devHolding: 0.0,
-        mintRevoked: true,
-        freezeRevoked: true,
-        lpBurned: 100,
-        stage: 'migrated' as const,
-        ageMinutes: 2400,
-      },
-      {
-        mint: '2qEHjDLDLbuBgRYvsxhc5D6uDWAivNFZGan56P1tpump',
-        symbol: 'PNUT',
-        name: 'Peanut the Squirrel',
-        imageUrl: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263/logo.png',
-        decimals: 6,
-        price: 1.15,
-        mcap: 1150000000,
-        liquidityUsd: 16000000,
-        vol5m: 140000,
-        vol1h: 1500000,
-        vol24h: 31000000,
-        buys: 510,
-        sells: 430,
-        holders: 112000,
-        top10: 28.0,
-        devHolding: 0.2,
-        mintRevoked: true,
-        freezeRevoked: true,
-        lpBurned: 100,
-        stage: 'migrated' as const,
-        ageMinutes: 1200,
-      },
-      {
-        mint: 'CurveLaunchPulseTest1111111111111111111111111',
-        symbol: 'SOLPEPE',
-        name: 'Solana Pepe',
-        imageUrl: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr/logo.png',
-        decimals: 6,
-        price: 0.00041,
-        mcap: 410000,
-        liquidityUsd: 38000,
-        vol5m: 14500,
-        vol1h: 88000,
-        vol24h: 195000,
-        buys: 110,
-        sells: 42,
-        holders: 890,
-        top10: 38.2,
-        devHolding: 2.5,
-        mintRevoked: true,
-        freezeRevoked: true,
-        lpBurned: 75,
-        stage: 'curve' as const,
-        ageMinutes: 45,
-      },
-      {
-        mint: 'DangerousRugRiskTest2222222222222222222222222',
-        symbol: 'HONEYPOT',
-        name: 'Fake Pump Token',
-        imageUrl: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm/logo.png',
-        decimals: 6,
-        price: 0.000012,
-        mcap: 12000,
-        liquidityUsd: 1800,
-        vol5m: 400,
-        vol1h: 800,
-        vol24h: 1200,
-        buys: 2,
-        sells: 12,
-        holders: 14,
-        top10: 78.5,
-        devHolding: 15.0,
-        mintRevoked: false,
-        freezeRevoked: false,
-        lpBurned: 0,
-        stage: 'new' as const,
-        ageMinutes: 5,
-      },
-    ];
-
-    // Generate 55 additional diverse realistic memecoins (total 62 tokens)
-    const prefixes = ['NEO', 'BABY', 'DARK', 'TURBO', 'CYBER', 'QUANT', 'MEGA', 'PEPE', 'CHILL', 'CHOMP', 'MOON', 'AI', 'SOL', 'APE'];
-    const suffixes = ['DOGE', 'CAT', 'FROG', 'BULL', 'SHIB', 'PUMP', 'ALPHA', 'RADAR', 'WHALE', 'CHAD', 'GEM', 'ROCKET', 'BOT'];
-    const stages: ('new' | 'curve' | 'migrated')[] = ['new', 'curve', 'migrated'];
-
-    const generatedTokens: any[] = [];
-    for (let i = 1; i <= 55; i++) {
-      const p = prefixes[i % prefixes.length];
-      const s = suffixes[(i * 3) % suffixes.length];
-      const symbol = `${p}${s}`.substring(0, 8);
-      const name = `${p} ${s} Coin`;
-      const stage = stages[i % 3];
-      const mint = `SolMemeTokenMint${i.toString().padStart(3, '0')}Xyz1234567890abcdef`;
-
-      let price = 0.00001 * (i * 1.5);
-      let mcap = stage === 'migrated' ? 2500000 + i * 450000 : stage === 'curve' ? 85000 + i * 12000 : 9000 + i * 1500;
-      let liquidity = stage === 'migrated' ? mcap * 0.12 : stage === 'curve' ? mcap * 0.2 : mcap * 0.25;
-      let vol5m = Math.round(liquidity * 0.08);
-      let vol1h = Math.round(vol5m * 6.5);
-      let vol24h = Math.round(vol1h * 8);
-      let buys = 15 + (i * 7);
-      let sells = 8 + (i * 4);
-      let holders = stage === 'migrated' ? 1200 + i * 150 : stage === 'curve' ? 140 + i * 18 : 25 + i * 3;
-      let top10 = 15 + ((i * 4) % 45);
-      let devHolding = ((i * 3) % 12) * 0.5;
-      let mintRevoked = i % 4 !== 0;
-      let freezeRevoked = i % 5 !== 0;
-      let lpBurned = stage === 'migrated' ? 100 : stage === 'curve' ? 65 : 0;
-      let ageMinutes = stage === 'new' ? (i % 20) + 1 : stage === 'curve' ? 30 + (i * 4) : 200 + (i * 35);
-
-      generatedTokens.push({
-        mint,
-        symbol,
-        name,
-        decimals: 6,
-        price,
-        mcap,
-        liquidityUsd: liquidity,
-        vol5m,
-        vol1h,
-        vol24h,
-        buys,
-        sells,
-        holders,
-        top10,
-        devHolding,
-        mintRevoked,
-        freezeRevoked,
-        lpBurned,
-        stage,
-        ageMinutes,
-      });
-    }
-
-    const allSeeds = [...flagshipTokens, ...generatedTokens];
-
-    try {
-      for (const s of allSeeds) {
-        const existing = await prisma.token.findUnique({ where: { mint: s.mint } });
-        if (!existing) {
-          const now = Date.now();
-          const trend = (s.buys - s.sells) / (s.buys + s.sells || 1);
-          const priceHistory = [
-            { price: s.price * (1 - trend * 0.25), takenAt: new Date(now - 3600000).toISOString() },
-            { price: s.price * (1 - trend * 0.18), takenAt: new Date(now - 1800000).toISOString() },
-            { price: s.price * (1 - trend * 0.08), takenAt: new Date(now - 600000).toISOString() },
-            { price: s.price * (1 + trend * 0.02), takenAt: new Date(now - 120000).toISOString() },
-            { price: s.price, takenAt: new Date(now).toISOString() },
-          ];
-
-          const topHolders = Array.from({ length: 10 }).map((_, idx) => ({
-            address: `${s.mint.slice(0, 4)}...${(idx + 1).toString().padStart(4, '0')}`,
-            pct: Math.round(((s.top10 * (10 - idx)) / 55) * 10) / 10,
-            amount: Math.round((s.mcap / s.price) * (((s.top10 * (10 - idx)) / 55) / 100)),
-          }));
-
-          const token = await prisma.token.create({
-            data: {
-              mint: s.mint,
-              symbol: s.symbol,
-              name: s.name,
-              imageUrl: (s as any).imageUrl || null,
-              decimals: s.decimals,
-              creator: 'CreatorWalletAddressPlaceholder111111111111',
-              priceHistory,
-              firstSeenAt: new Date(Date.now() - s.ageMinutes * 60000),
-            },
-          });
-
-          await prisma.tokenSnapshot.create({
-            data: {
-              tokenId: token.id,
-              price: s.price,
-              mcap: s.mcap,
-              liquidityUsd: s.liquidityUsd,
-              volume5m: s.vol5m,
-              volume1h: s.vol1h,
-              volume24h: s.vol24h,
-              buys: s.buys,
-              sells: s.sells,
-              holderCount: s.holders,
-              top10Pct: s.top10,
-              topHolders,
-              devHoldingPct: s.devHolding,
-              mintAuthRevoked: s.mintRevoked,
-              freezeAuthRevoked: s.freezeRevoked,
-              lpBurnedOrLockedPct: s.lpBurned,
-              stage: s.stage,
-              takenAt: new Date(),
-            },
-          });
-        }
-      }
-      logger.info('Initialized verified token pool:', { totalSeeded: allSeeds.length });
-    } catch (e: any) {
-      logger.warn('Initial token seed handled:', e.message);
-    }
-  }
-
+  /**
+   * Ingests live Helius Webhook payloads idempotently.
+   * - Idempotency on (mint, slot) or event signature.
+   * - Records real price snapshot into tokens.price_history (capped at last 100 points).
+   * - NEVER writes placeholder values (25, 35, 2) into risk inputs.
+   * - Enqueues a BullMQ enrichment job (non-blocking).
+   */
   async ingestHeliusWebhook(events: any[]) {
     const processedAlerts: any[] = [];
 
     for (const evt of events) {
       // Increment system counter
-      await prisma.systemCounter.upsert({
-        where: { key: 'webhook_ingest_count' },
-        update: { value: { increment: 1 } },
-        create: { key: 'webhook_ingest_count', value: BigInt(1) },
-      });
+      try {
+        await prisma.systemCounter.upsert({
+          where: { key: 'webhook_ingest_count' },
+          update: { value: { increment: 1 } },
+          create: { key: 'webhook_ingest_count', value: BigInt(1) },
+        });
+      } catch {}
 
       const mint = evt.mint || evt.tokenTransfers?.[0]?.mint;
       if (!mint) continue;
 
+      // Deterministic event key for deduplication and idempotency
+      const eventSig = evt.signature || evt.events?.signature;
+      const dedupeKey = eventSig
+        ? `sig:${eventSig}`
+        : evt.slot
+        ? `slot:${mint}:${evt.slot}`
+        : `launch:${mint}`;
+
       let token = await prisma.token.findUnique({ where: { mint } });
       const defaultSym = (evt.symbol || mint.slice(0, 4).toUpperCase()).replace(/[^A-Z0-9]/g, '') || 'SOLPUMP';
-      const price = evt.priceUsd || 0.0001;
+      const price = typeof evt.priceUsd === 'number' && !isNaN(evt.priceUsd) && evt.priceUsd > 0
+        ? evt.priceUsd
+        : 0.0001;
       const historyPoint = { price, takenAt: new Date().toISOString() };
 
       if (!token) {
@@ -530,7 +103,8 @@ export class TokensService {
         });
       } else {
         const existingHistory = Array.isArray(token.priceHistory) ? token.priceHistory : [];
-        const updatedHistory = [...existingHistory, historyPoint].slice(-50);
+        // Price history capped at last 100 points
+        const updatedHistory = [...existingHistory, historyPoint].slice(-100);
         try {
           token = await prisma.token.update({
             where: { id: token.id },
@@ -539,29 +113,30 @@ export class TokensService {
         } catch {}
       }
 
-      // Snapshot creation
+      // Snapshot creation: store real event values or 0, NEVER placeholder values (25, 35, 2)
       const snapshot = await prisma.tokenSnapshot.create({
         data: {
           tokenId: token.id,
           price,
-          mcap: evt.mcapUsd || 10000,
-          liquidityUsd: evt.liquidityUsd || 5000,
-          volume5m: evt.volume5m || 1000,
-          volume1h: evt.volume1h || 2000,
-          volume24h: evt.volume24h || 5000,
-          buys: evt.buys5m || 10,
-          sells: evt.sells5m || 2,
-          holderCount: evt.holderCount || 25,
-          top10Pct: evt.top10Pct || 35,
-          devHoldingPct: evt.devHoldingPct || 2,
+          mcap: evt.mcapUsd ?? (price * 1_000_000_000),
+          liquidityUsd: evt.liquidityUsd ?? 0,
+          volume5m: evt.volume5m ?? 0,
+          volume1h: evt.volume1h ?? 0,
+          volume24h: evt.volume24h ?? 0,
+          buys: evt.buys5m ?? 0,
+          sells: evt.sells5m ?? 0,
+          holderCount: evt.holderCount ?? 0,
+          top10Pct: evt.top10Pct ?? 0,
+          devHoldingPct: evt.devHoldingPct ?? 0,
           mintAuthRevoked: !!evt.mintAuthorityRevoked,
           freezeAuthRevoked: !!evt.freezeAuthorityRevoked,
-          lpBurnedOrLockedPct: evt.lpBurnedOrLockedPct || 0,
+          lpBurnedOrLockedPct: evt.lpBurnedOrLockedPct ?? 0,
           stage: evt.stage || 'new',
           takenAt: new Date(),
         },
       });
 
+      // Compute initial risk from available inputs
       const risk = evaluateTokenRisk({
         mintAuthorityRevoked: snapshot.mintAuthRevoked,
         freezeAuthorityRevoked: snapshot.freezeAuthRevoked,
@@ -589,13 +164,12 @@ export class TokensService {
         launchpad: evt.launchpad || 'pump.fun',
       });
 
-      // Check alert trigger condition: New Launch with deterministic eventKey
-      const eventKey = `launch:${mint}`;
-      const existingAlert = await prisma.alert.findUnique({ where: { eventKey } });
+      // Check alert trigger condition with deterministic dedupeKey
+      const existingAlert = await prisma.alert.findUnique({ where: { eventKey: dedupeKey } });
       if (!existingAlert) {
         const alertRecord = await prisma.alert.create({
           data: {
-            eventKey,
+            eventKey: dedupeKey,
             kind: 'launch',
             tokenId: token.id,
             payload: {
@@ -612,15 +186,19 @@ export class TokensService {
         processedAlerts.push(alertRecord);
       }
 
-      // Fix 2: Non-blocking background enrichment via BullMQ queue
+      // Non-blocking BullMQ background enrichment job (with 3 attempts and backoff)
       try {
         await scoringQueue.add(
           'enrich_token',
           { mint, creator: evt.creator || null, stage: evt.stage || 'new' },
-          { jobId: `enrich:${mint}:${Date.now()}` }
+          {
+            jobId: `enrich:${mint}:${Date.now()}`,
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 1000 },
+          }
         );
       } catch (qErr: any) {
-        logger.warn(`Could not add enrich_token job to queue:`, qErr.message);
+        logger.warn(`Could not enqueue enrich_token job:`, qErr.message);
       }
 
       // Background asynchronous trigger (never blocks webhook response)
@@ -635,12 +213,16 @@ export class TokensService {
   }
 
   /**
-   * Fix 1 & 2: Background On-Chain Token Enrichment
-   * Fetches real DAS metadata + icon and on-chain risk inputs (top 10 %, authorities, dev holding, LP burn)
+   * On-Chain Token Enrichment:
+   * - Helius DAS getAsset for real metadata, image URL, name, and symbol
+   * - Helius RPC (rate-limited <= 8 RPS) for top 10 %, authorities, dev balance, LP status
+   * - Retries with exponential backoff; if enrichment fails, keeps token with enriched=false
+   * - NEVER writes placeholder values into risk inputs
    */
   async enrichTokenOnChain(mint: string, creatorAddress?: string | null, stage: string = 'new') {
     try {
       logger.info(`Starting on-chain enrichment for ${mint}...`);
+
       // 1. Fetch real metadata and image URL via Helius DAS getAsset or DexScreener fallback
       const assetMeta = await heliusOnChainService.fetchTokenAsset(mint);
 
@@ -695,7 +277,7 @@ export class TokensService {
       let updatedSnapshot = latestSnapshot;
       if (latestSnapshot) {
         const updateSnapData: any = {
-          holderCount: realInputs.holderCount || latestSnapshot.holderCount,
+          holderCount: realInputs.holderCount,
           top10Pct: realInputs.top10Pct,
           topHolders: realInputs.topHolders,
           devHoldingPct: realInputs.devHoldingPct,
@@ -754,13 +336,15 @@ export class TokensService {
         } catch {}
       }
 
-      logger.info(`Completed on-chain enrichment for ${mint}: top10=${realInputs.top10Pct}%, dev=${realInputs.devHoldingPct}%, lpBurned=${realInputs.lpBurnedOrLockedPct}%`);
+      logger.info(`Completed on-chain enrichment for ${mint}: top10=${realInputs.top10Pct}%, dev=${realInputs.devHoldingPct}%, lpBurned=${realInputs.lpBurnedOrLockedPct}%, enriched=${realInputs.enriched}`);
       return { token, snapshot: updatedSnapshot };
     } catch (err: any) {
       logger.error(`Error in enrichTokenOnChain for ${mint}:`, err.message);
       return null;
     }
-  }  async queryScreener(query: TokenQueryDto & { search?: string }): Promise<{ data: TokenWithLatestSnapshot[]; tokens: TokenWithLatestSnapshot[]; total: number }> {
+  }
+
+  async queryScreener(query: TokenQueryDto & { search?: string }): Promise<{ data: TokenWithLatestSnapshot[]; tokens: TokenWithLatestSnapshot[]; total: number }> {
     const startTime = Date.now();
     try {
       const tokens = await prisma.token.findMany({
@@ -848,7 +432,7 @@ export class TokensService {
 
         if (query.maxRiskScore && risk.riskScore > query.maxRiskScore) continue;
 
-        // Fix 3: Real Sparklines from token.priceHistory
+        // Real Sparklines from token.priceHistory (capped at last 100 points)
         const history = Array.isArray(token.priceHistory) ? token.priceHistory : [];
         const realPrices: number[] = history
           .map((p: any) => (typeof p === 'number' ? p : p?.price))
@@ -859,10 +443,10 @@ export class TokensService {
         list.push({ token, snapshot: latestSnapshot, risk, sparkline });
       }
 
-      // Sort list
+      // Sort
       list.sort((a, b) => {
-        let valA = 0;
-        let valB = 0;
+        let valA: any = 0;
+        let valB: any = 0;
         switch (query.sortBy) {
           case 'volume_5m':
             valA = a.snapshot.volume5m;
@@ -934,7 +518,7 @@ export class TokensService {
       holderCount: latestSnapshot.holderCount,
     });
 
-    // Fix 3: Real Sparklines from token.priceHistory
+    // Real Sparklines from token.priceHistory (capped at last 100 points)
     const history = Array.isArray(token.priceHistory) ? token.priceHistory : [];
     const realPrices: number[] = history
       .map((p: any) => (typeof p === 'number' ? p : p?.price))

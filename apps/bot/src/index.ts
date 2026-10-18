@@ -242,8 +242,20 @@ export function createBot(token = process.env.TELEGRAM_BOT_TOKEN || 'dummy_token
   return bot;
 }
 
-// If started as worker
+// If started as worker or web service
 if (process.argv[1]?.endsWith('index.js') || process.argv[1]?.endsWith('index.ts')) {
+  // Minimal HTTP listener if Render assigns a PORT (e.g. deployed as Web service)
+  if (process.env.PORT) {
+    import('http').then(({ createServer }) => {
+      createServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('SolRadar Bot OK');
+      }).listen(Number(process.env.PORT), () => {
+        console.log(`[SolRadar Bot] Health listener bound to PORT ${process.env.PORT}`);
+      });
+    });
+  }
+
   const bot = createBot();
   console.log('[SolRadar Bot] grammY bot starting long polling...');
   bot.start();

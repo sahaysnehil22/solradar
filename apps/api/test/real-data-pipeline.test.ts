@@ -9,6 +9,59 @@ describe('Real Data Pipeline & Axiom Layout Fixes', () => {
 
   beforeAll(async () => {
     app = await createServer();
+
+    // Ingest realistic tokens with images and diverse risk inputs
+    await app.inject({
+      method: 'POST',
+      url: '/tokens/webhook/helius',
+      payload: [
+        {
+          mint: 'RealPipelineSeed1111111111111111111111111',
+          symbol: 'SAFE',
+          name: 'Safe Token Community',
+          imageUrl: 'https://ipfs.io/ipfs/QmZpeT4zG9k4J88k1uYvQ3wJtW7b3wZ6J1uYvQ3wJtW7b3',
+          priceUsd: 0.005,
+          mcapUsd: 500000,
+          liquidityUsd: 95000,
+          holderCount: 850,
+          top10Pct: 18.2,
+          mintAuthorityRevoked: true,
+          freezeAuthorityRevoked: true,
+          lpBurnedOrLockedPct: 100,
+          stage: 'migrated',
+        },
+        {
+          mint: 'RealPipelineSeed2222222222222222222222222',
+          symbol: 'RISKY',
+          name: 'High Hazard Gem',
+          imageUrl: 'ipfs://QmHazard1234567890abcdef1234567890abcdef12345',
+          priceUsd: 0.0001,
+          mcapUsd: 15000,
+          liquidityUsd: 3000,
+          holderCount: 15,
+          top10Pct: 78.5,
+          devHoldingPct: 22.0,
+          mintAuthorityRevoked: false,
+          freezeAuthorityRevoked: false,
+          lpBurnedOrLockedPct: 0,
+          stage: 'curve',
+        },
+        {
+          mint: 'RealPipelineSeed3333333333333333333333333',
+          symbol: 'MID',
+          name: 'Medium Risk Token',
+          priceUsd: 0.001,
+          mcapUsd: 80000,
+          liquidityUsd: 20000,
+          holderCount: 120,
+          top10Pct: 42.0,
+          mintAuthorityRevoked: true,
+          freezeAuthorityRevoked: true,
+          lpBurnedOrLockedPct: 60,
+          stage: 'new',
+        },
+      ],
+    });
   }, 25000);
 
   afterAll(async () => {

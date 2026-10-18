@@ -1,10 +1,15 @@
 import { env } from '../config/env.js';
 import { logger } from '../observability/index.js';
 
+export const PUMP_FUN_PROGRAM = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
+export const RAYDIUM_PROGRAM = '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8';
+export const MANDATORY_PROGRAM_ADDRESSES = [PUMP_FUN_PROGRAM, RAYDIUM_PROGRAM];
+
 export interface TokenAssetMetadata {
   name?: string;
   symbol?: string;
   imageUrl?: string;
+  description?: string;
   decimals?: number;
   supply?: number;
   mintAuthority?: string | null;
@@ -27,6 +32,7 @@ export interface TokenDistributionInfo {
   freezeAuthRevoked: boolean;
   lpBurnedOrLockedPct: number;
   liquidityUsd?: number;
+  enriched?: boolean;
 }
 
 /**
@@ -49,6 +55,8 @@ export function normalizeImageUrl(url?: string | null): string | null {
 export class HeliusOnChainService {
   private rpcUrl: string;
   private apiKey: string;
+  private lastRequestTime = 0;
+  private minIntervalMs = 125; // Max 8 RPS sustained (1000 / 8 = 125ms)
 
   constructor() {
     this.apiKey = env.HELIUS_API_KEY || '';
@@ -63,124 +71,253 @@ export class HeliusOnChainService {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  private async throttle(): Promise<void> {
+    const now = Date.now();
+    const timeSinceLast = now - this.lastRequestTime;
+    if (timeSinceLast < this.minIntervalMs) {
+      await this.sleep(this.minIntervalMs - timeSinceLast);
+    }
+    this.lastRequestTime = Date.now();
+  }
+
   private getActiveRpcUrl(): string {
     const key = env.HELIUS_API_KEY || '';
     if (key) {
       return `https://mainnet.helius-rpc.com/?api-key=${key}`;
     }
-    return 'https://api.mainnet-beta.solana.com';
+    return env.HELIUS_RPC_URL || 'https://api.mainnet-beta.solana.com';
   }
 
   /**
-   * RPC call helper with timeout and 200ms rate-limit spacing
+   * Blocker 2: Sync Helius Webhook Addresses on API Startup
+   * - NEVER overwrite accountAddresses with an empty array.
+   * - On boot, fetch the existing webhook; if accountAddresses is missing/empty or missing programs, restore them; otherwise leave it untouched.
+   * - Log what it did at startup (added / already present / skipped).
    */
-  async callRpc(method: string, params: any[]): Promise<any> {
-    const url = this.getActiveRpcUrl();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
+  async syncWebhookAddresses(overrideApiKey?: string): Promise<{ status: 'added' | 'already_present' | 'skipped'; addresses?: string[]; reason?: string }> {
+    const apiKey = overrideApiKey || env.HELIUS_API_KEY || '';
+    const webhookId = env.HELIUS_WEBHOOK_ID || '4fbc8fb3-863e-47e2-b164-b24afb4ae0a3';
+
+    if (!apiKey) {
+      logger.info(`[Helius Webhook Sync] skipped: No live HELIUS_API_KEY configured (webhookId: ${webhookId})`);
+      return { status: 'skipped', reason: 'no_api_key' };
+    }
 
     try {
-      const res = await fetch(url, {
-        method: 'POST',
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 9000); // <=10s timeout
+
+      const getUrl = `https://api.helius.xyz/v0/webhooks/${webhookId}?api-key=${apiKey}`;
+      const getRes = await fetch(getUrl, {
+        method: 'GET',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: `solradar-${Date.now()}`,
-          method,
-          params,
-        }),
         signal: controller.signal,
       });
-
-      if (!res.ok) {
-        throw new Error(`RPC ${method} returned HTTP ${res.status}`);
-      }
-
-      const json: any = await res.json();
-      if (json.error) {
-        throw new Error(`RPC ${method} error: ${JSON.stringify(json.error)}`);
-      }
-
-      return json.result;
-    } finally {
       clearTimeout(timeout);
-      // Enforce 200ms spacing to respect Helius 10 RPS limit
-      await this.sleep(200);
+
+      if (!getRes.ok) {
+        const errText = await getRes.text().catch(() => '');
+        logger.warn(`[Helius Webhook Sync] skipped: GET webhook ${webhookId} returned status ${getRes.status}: ${errText}`);
+        return { status: 'skipped', reason: `http_${getRes.status}` };
+      }
+
+      const webhookData: any = await getRes.json();
+      const currentAddresses: string[] = Array.isArray(webhookData.accountAddresses) ? webhookData.accountAddresses : [];
+
+      // Check if both program addresses are already present
+      const hasPump = currentAddresses.includes(PUMP_FUN_PROGRAM);
+      const hasRaydium = currentAddresses.includes(RAYDIUM_PROGRAM);
+
+      if (currentAddresses.length > 0 && hasPump && hasRaydium) {
+        logger.info(`[Helius Webhook Sync] already present: Webhook ${webhookId} is watching ${currentAddresses.length} addresses (Pump.fun & Raydium verified)`);
+        return { status: 'already_present', addresses: currentAddresses };
+      }
+
+      // Restore program addresses; NEVER send an empty array
+      const targetAddresses = Array.from(new Set([...currentAddresses, ...MANDATORY_PROGRAM_ADDRESSES]));
+      if (targetAddresses.length === 0) {
+        targetAddresses.push(PUMP_FUN_PROGRAM, RAYDIUM_PROGRAM);
+      }
+
+      const putController = new AbortController();
+      const putTimeout = setTimeout(() => putController.abort(), 9000);
+
+      const putPayload: any = {
+        webhookID: webhookId,
+        webhookURL: webhookData.webhookURL,
+        transactionTypes: webhookData.transactionTypes || ['Any'],
+        accountAddresses: targetAddresses,
+        webhookType: webhookData.webhookType || 'enhanced',
+      };
+      if (webhookData.authHeader) {
+        putPayload.authHeader = webhookData.authHeader;
+      }
+
+      const putRes = await fetch(`https://api.helius.xyz/v0/webhooks?api-key=${apiKey}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(putPayload),
+        signal: putController.signal,
+      });
+      clearTimeout(putTimeout);
+
+      if (!putRes.ok) {
+        const putErr = await putRes.text().catch(() => '');
+        logger.warn(`[Helius Webhook Sync] skipped: PUT webhook update returned status ${putRes.status}: ${putErr}`);
+        return { status: 'skipped', reason: `put_failed_${putRes.status}` };
+      }
+
+      logger.info(`[Helius Webhook Sync] added: Restored [Pump.fun, Raydium] to webhook ${webhookId}. Total watching: ${targetAddresses.length}`);
+      return { status: 'added', addresses: targetAddresses };
+    } catch (err: any) {
+      logger.warn(`[Helius Webhook Sync] skipped: Exception occurred: ${err.message}`);
+      return { status: 'skipped', reason: err.message };
     }
   }
 
   /**
-   * Fix 1: Helius DAS getAsset API for real metadata & image URL
-   * POST https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}
-   * {"jsonrpc":"2.0","id":"1","method":"getAsset","params":{"id":"<mint>"}}
+   * RPC call helper with sustained <= 8 RPS rate-limiting, exponential backoff, and <= 10s timeout.
    */
-  async fetchTokenAsset(mint: string): Promise<TokenAssetMetadata | null> {
-    const key = env.HELIUS_API_KEY || '';
+  async callRpc(method: string, params: any[], maxAttempts = 3): Promise<any> {
+    const url = this.getActiveRpcUrl();
 
-    // 1. If Helius API Key is configured, use Helius DAS getAsset
-    if (key) {
+    let lastError: any;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      await this.throttle();
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000); // 8s per attempt (<=10s)
+
       try {
-        const dasUrl = `https://mainnet.helius-rpc.com/?api-key=${key}`;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-
-        const res = await fetch(dasUrl, {
+        const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             jsonrpc: '2.0',
-            id: 'getAsset',
-            method: 'getAsset',
-            params: { id: mint },
+            id: `solradar-${Date.now()}`,
+            method,
+            params,
           }),
           signal: controller.signal,
         });
+
         clearTimeout(timeout);
 
-        if (res.ok) {
-          const json: any = await res.json();
-          const result = json?.result;
-          if (result) {
-            const rawImage =
-              result.content?.links?.image ||
-              result.content?.files?.[0]?.uri ||
-              result.content?.json_uri;
+        if (res.status === 429) {
+          // Rate limited: backoff exponentially
+          const backoffMs = Math.min(3000, 500 * Math.pow(2, attempt - 1));
+          logger.warn(`Helius RPC 429 on ${method}. Backing off for ${backoffMs}ms (attempt ${attempt}/${maxAttempts})...`);
+          await this.sleep(backoffMs);
+          continue;
+        }
 
-            let imageUrl = normalizeImageUrl(rawImage);
+        if (!res.ok) {
+          throw new Error(`RPC ${method} returned HTTP ${res.status}`);
+        }
 
-            // If json_uri was an offchain json metadata link, resolve it if imageUrl is still empty
-            if (!imageUrl && result.content?.json_uri) {
-              try {
-                const metaRes = await fetch(normalizeImageUrl(result.content.json_uri)!);
-                if (metaRes.ok) {
-                  const metaJson: any = await metaRes.json();
-                  imageUrl = normalizeImageUrl(metaJson.image);
-                }
-              } catch {}
+        const json: any = await res.json();
+        if (json.error) {
+          throw new Error(`RPC ${method} error: ${JSON.stringify(json.error)}`);
+        }
+
+        return json.result;
+      } catch (err: any) {
+        clearTimeout(timeout);
+        lastError = err;
+        if (attempt < maxAttempts) {
+          const delay = 300 * attempt;
+          await this.sleep(delay);
+        }
+      }
+    }
+
+    throw lastError || new Error(`RPC ${method} failed after ${maxAttempts} attempts`);
+  }
+
+  /**
+   * Fix 1: Helius DAS getAsset API for real metadata, image URL, and description
+   * POST https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}
+   * {"jsonrpc":"2.0","id":"1","method":"getAsset","params":{"id":"<mint>"}}
+   */
+  async fetchTokenAsset(mint: string, maxAttempts = 3): Promise<TokenAssetMetadata | null> {
+    const key = env.HELIUS_API_KEY || '';
+
+    // 1. If Helius API Key is configured, use Helius DAS getAsset
+    if (key) {
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        await this.throttle();
+        try {
+          const dasUrl = `https://mainnet.helius-rpc.com/?api-key=${key}`;
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 7000);
+
+          const res = await fetch(dasUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 'getAsset',
+              method: 'getAsset',
+              params: { id: mint },
+            }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+
+          if (res.status === 429) {
+            await this.sleep(500 * attempt);
+            continue;
+          }
+
+          if (res.ok) {
+            const json: any = await res.json();
+            const result = json?.result;
+            if (result) {
+              const rawImage =
+                result.content?.links?.image ||
+                result.content?.files?.[0]?.uri ||
+                result.content?.json_uri;
+
+              let imageUrl = normalizeImageUrl(rawImage);
+
+              // If json_uri was an offchain json metadata link, resolve it if imageUrl is still empty
+              if (!imageUrl && result.content?.json_uri) {
+                try {
+                  const metaRes = await fetch(normalizeImageUrl(result.content.json_uri)!);
+                  if (metaRes.ok) {
+                    const metaJson: any = await metaRes.json();
+                    imageUrl = normalizeImageUrl(metaJson.image);
+                  }
+                } catch {}
+              }
+
+              const name = result.content?.metadata?.name;
+              const symbol = result.content?.metadata?.symbol;
+              const description = result.content?.metadata?.description;
+              const supply = result.token_info?.supply ? Number(result.token_info.supply) : undefined;
+              const decimals = result.token_info?.decimals ?? 6;
+              const mintAuth = result.token_info?.mint_authority;
+              const freezeAuth = result.token_info?.freeze_authority;
+              const creator = result.creators?.[0]?.address || result.authorities?.[0]?.address || null;
+
+              return {
+                name,
+                symbol,
+                imageUrl: imageUrl || undefined,
+                description,
+                decimals,
+                supply,
+                mintAuthority: mintAuth,
+                freezeAuthority: freezeAuth,
+                creator,
+              };
             }
-
-            const name = result.content?.metadata?.name;
-            const symbol = result.content?.metadata?.symbol;
-            const supply = result.token_info?.supply ? Number(result.token_info.supply) : undefined;
-            const decimals = result.token_info?.decimals ?? 6;
-            const mintAuth = result.token_info?.mint_authority;
-            const freezeAuth = result.token_info?.freeze_authority;
-            const creator = result.creators?.[0]?.address || result.authorities?.[0]?.address || null;
-
-            return {
-              name,
-              symbol,
-              imageUrl: imageUrl || undefined,
-              decimals,
-              supply,
-              mintAuthority: mintAuth,
-              freezeAuthority: freezeAuth,
-              creator,
-            };
+          }
+        } catch (err: any) {
+          if (attempt === maxAttempts) {
+            logger.warn(`Helius DAS getAsset error for ${mint}: ${err.message}`);
           }
         }
-      } catch (err: any) {
-        logger.warn(`Helius DAS getAsset error for ${mint}:`, err.message);
       }
     }
 
@@ -227,7 +364,7 @@ export class HeliusOnChainService {
     stage: string = 'new'
   ): Promise<TokenDistributionInfo> {
     let holderCount = 0;
-    let top10Pct = 30.0;
+    let top10Pct = 0.0;
     let topHolders: HolderInfo[] = [];
     let devHoldingPct = 0.0;
     let mintAuthRevoked = false;
@@ -235,6 +372,7 @@ export class HeliusOnChainService {
     let lpBurnedOrLockedPct = 0;
     let liquidityUsd: number | undefined;
     let totalSupply = 1_000_000_000;
+    let enriched = false;
 
     // 1. Fetch Mint Account Info for Mint & Freeze Authorities and Decimals
     try {
@@ -250,6 +388,7 @@ export class HeliusOnChainService {
           const dec = parsed.decimals || 6;
           totalSupply = Number(parsed.supply) / Math.pow(10, dec);
         }
+        enriched = true;
       }
     } catch (err: any) {
       logger.warn(`Error fetching mint account info for ${mint}:`, err.message);
@@ -281,6 +420,7 @@ export class HeliusOnChainService {
 
         // Use real count of largest accounts as lower bound for active holders
         holderCount = Math.max(accounts.length, 1);
+        enriched = true;
       }
     } catch (err: any) {
       logger.warn(`Error fetching largest accounts for ${mint}:`, err.message);
@@ -317,7 +457,6 @@ export class HeliusOnChainService {
     if (stage === 'migrated') {
       lpBurnedOrLockedPct = 100;
     } else if (isPumpFun || stage === 'curve' || stage === 'new') {
-      // In bonding curve, LP is not created yet
       lpBurnedOrLockedPct = 0;
     }
 
@@ -347,6 +486,7 @@ export class HeliusOnChainService {
       freezeAuthRevoked,
       lpBurnedOrLockedPct,
       liquidityUsd,
+      enriched,
     };
   }
 }
