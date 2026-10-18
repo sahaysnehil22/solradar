@@ -87,7 +87,7 @@ describe('Live Trend Chart Upgrade & Price Sampler Pipeline', () => {
       { mint: mint2, symbol: 'JUP2', priceUsd: 0.004, stage: 'migrated' },
     ]);
 
-    // Mock global fetch to intercept Jupiter API call
+    // Mock global fetch to intercept Jupiter and DexScreener API calls
     const originalFetch = global.fetch;
     const fetchSpy = vi.fn().mockImplementation(async (url: string | URL | Request) => {
       const urlStr = url.toString();
@@ -98,6 +98,12 @@ describe('Live Trend Chart Upgrade & Price Sampler Pipeline', () => {
             [mint1]: { usdPrice: 0.00245 },
             [mint2]: { usdPrice: 0.00489 },
           }),
+        };
+      }
+      if (urlStr.includes('api.dexscreener.com')) {
+        return {
+          ok: true,
+          json: async () => ({ pairs: [] }),
         };
       }
       return originalFetch(url);

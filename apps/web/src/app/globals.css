@@ -1,30 +1,38 @@
 :root {
-  /* Deep Matte Dark Black Trading Terminal Theme (Axiom / Photon style) */
-  --bg-primary: #050608;
-  --bg-secondary: #0a0b0f;
-  --bg-card: #0d0e14;
-  --bg-card-hover: #12141c;
-  --border-color: #171924;
-  --border-strong: #232738;
+  /* Exact Axiom Dark Trading Terminal Theme */
+  --bg-primary: #07070a;
+  --bg-secondary: #0b0c12;
+  --bg-card: #101119;
+  --bg-card-hover: #151722;
+  --border-color: #191b28;
+  --border-strong: #24273a;
 
-  --text-main: #f8fafc;
-  --text-muted: #94a3b8;
-  --text-sub: #556177;
+  --text-main: #ffffff;
+  --text-muted: #8b90a6;
+  --text-sub: #575c73;
 
-  /* Trading Terminal Accents */
-  --accent: #8b5cf6;
-  --accent-hover: #7c3aed;
-  --accent-dim: rgba(139, 92, 246, 0.14);
-  --accent-subtle: rgba(139, 92, 246, 0.05);
+  /* Axiom Electric Blue Action & Terminal Accents */
+  --accent: #4f75fe;
+  --accent-hover: #3d63ee;
+  --accent-dim: rgba(79, 117, 254, 0.15);
+  --accent-subtle: rgba(79, 117, 254, 0.05);
 
-  --up: #00dc82;
-  --down: #ff3355;
+  --up: #10b981;
+  --up-bg: rgba(16, 185, 129, 0.12);
+  --up-border: rgba(16, 185, 129, 0.28);
+
+  --down: #f43f5e;
+  --down-bg: rgba(244, 63, 94, 0.12);
+  --down-border: rgba(244, 63, 94, 0.28);
+
   --warning: #f59e0b;
+  --warning-bg: rgba(245, 158, 11, 0.12);
+  --warning-border: rgba(245, 158, 11, 0.28);
 
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  --radius: 4px;
-  --radius-sm: 2px;
-  --radius-md: 6px;
+  --radius: 6px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
 }
 
 * {
@@ -373,4 +381,154 @@ label.field-label {
 .dropdown-item:hover {
   background: var(--bg-card-hover);
   color: var(--text-main);
+}
+
+/* Axiom Signature Table & Card Styles */
+.axiom-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 4px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.axiom-table thead th {
+  padding: 8px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: capitalize;
+  color: var(--text-sub);
+  letter-spacing: 0.02em;
+  background: transparent;
+  white-space: nowrap;
+}
+
+.axiom-row {
+  background: #101119;
+  border: 1px solid #191b28;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.axiom-row td {
+  padding: 10px 14px;
+  border-top: 1px solid #191b28;
+  border-bottom: 1px solid #191b28;
+  color: var(--text-main);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.axiom-row td:first-child {
+  border-left: 1px solid #191b28;
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+}
+
+.axiom-row td:last-child {
+  border-right: 1px solid #191b28;
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
+.axiom-row:hover td {
+  background: #151722;
+  border-color: #282b3d;
+}
+
+/* Axiom Action Button */
+.axiom-btn-buy {
+  background: #4f75fe;
+  color: #ffffff;
+  border: none;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 18px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, transform 0.1s ease, box-shadow 0.12s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(79, 117, 254, 0.25);
+}
+
+.axiom-btn-buy:hover {
+  background: #3c63ee;
+  box-shadow: 0 4px 14px rgba(79, 117, 254, 0.4);
+  transform: translateY(-1px);
+}
+
+/* Axiom Micro Badge Matrix */
+.axiom-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1.5px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  color: var(--text-muted);
+}
+
+.axiom-pill-green {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.22);
+  color: #10b981;
+}
+
+.axiom-pill-red {
+  background: rgba(244, 63, 94, 0.08);
+  border-color: rgba(244, 63, 94, 0.22);
+  color: #f43f5e;
+}
+
+.axiom-pill-amber {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.22);
+  color: #f59e0b;
+}
+
+/* Axiom Bottom Dock Bar */
+.axiom-dock {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 42px;
+  background: #090a10;
+  border-top: 1px solid #1a1c29;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  z-index: 100;
+  font-size: 11px;
+}
+
+.axiom-dock-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 600;
+  border-radius: 4px;
+  transition: all 0.12s ease;
+}
+
+.axiom-dock-tab:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.axiom-dock-tab.active {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
 }
