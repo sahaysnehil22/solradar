@@ -20,38 +20,11 @@ export interface PortfolioAddressRecord {
 
 export class WalletsService {
   /**
-   * Cleans up stuck QA test wallets from PostgreSQL via direct SQL execution.
-   */
-  async ensureWalletsCleaned(): Promise<void> {
-    try {
-      await prisma.$executeRawUnsafe(`
-        DELETE FROM "tracked_wallets"
-        WHERE "address" = '5Q544fKrFoe6tsEbD7S8EmxGTJY6cSdfNSWDkxV82sA'
-           OR "user_id" IN (
-             SELECT "id" FROM "users" WHERE "email" = 'tg_8266418411@solradar.user'
-           );
-      `).catch(() => {});
-      logger.info('Cleaned up QA tracked wallets via DDL/SQL.');
-    } catch (err: any) {
-      logger.warn('Error cleaning up QA tracked wallets via DDL:', err.message);
-    }
-  }
-
-  /**
    * Adds a tracked smart wallet with strict plan limit enforcement in PostgreSQL.
    */
   async trackWallet(userId: string, address: string, label = 'Smart Trader'): Promise<TrackedWalletRecord> {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new Error('User not found');
-
-    if (user.email === 'tg_8266418411@solradar.user') {
-      await prisma.trackedWallet.deleteMany({
-        where: {
-          userId,
-          address: '5Q544fKrFoe6tsEbD7S8EmxGTJY6cSdfNSWDkxV82sA',
-        },
-      }).catch(() => {});
-    }
 
     const planConfig = PLAN_CONFIGS[user.plan as PlanCode] || PLAN_CONFIGS[PlanCode.FREE];
     const userTrackedCount = await prisma.trackedWallet.count({ where: { userId } });
@@ -95,15 +68,6 @@ export class WalletsService {
   }
 
   async getTrackedWallets(userId: string): Promise<TrackedWalletRecord[]> {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user?.email === 'tg_8266418411@solradar.user') {
-      await prisma.trackedWallet.deleteMany({
-        where: {
-          userId,
-          address: '5Q544fKrFoe6tsEbD7S8EmxGTJY6cSdfNSWDkxV82sA',
-        },
-      }).catch(() => {});
-    }
     return prisma.trackedWallet.findMany({ where: { userId } });
   }
 
