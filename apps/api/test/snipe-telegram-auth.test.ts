@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { FastifyInstance } from 'fastify';
 import { createServer } from '../src/server.js';
+import { tokensService } from '../src/tokens/tokens.service.js';
 
 describe('Snipe Rules & Telegram Auth API', () => {
   let app: FastifyInstance;
@@ -67,28 +68,22 @@ describe('Snipe Rules & Telegram Auth API', () => {
     const rules = JSON.parse(listRes.body);
     expect(rules.length).toBeGreaterThan(0);
 
-    // Ingest a webhook launch token matching rule
-    const webhookRes = await app.inject({
-      method: 'POST',
-      url: '/tokens/webhook/helius',
-      payload: [
-        {
-          mint: 'MatchingSnipeTokenMint9999999999999999999',
-          symbol: 'SNIPED',
-          name: 'Sniped Token Alpha',
-          priceUsd: 0.00025,
-          mcapUsd: 25000,
-          liquidityUsd: 6500,
-          devHoldingPct: 2,
-          mintAuthorityRevoked: true,
-          freezeAuthorityRevoked: true,
-          lpBurnedOrLockedPct: 100,
-          launchpad: 'pump.fun',
-        },
-      ],
-    });
-
-    expect(webhookRes.statusCode).toBe(200);
+    // Ingest a launch token matching rule
+    await tokensService.ingestHeliusWebhook([
+      {
+        mint: 'MatchingSnipeTokenMint9999999999999999999',
+        symbol: 'SNIPED',
+        name: 'Sniped Token Alpha',
+        priceUsd: 0.00025,
+        mcapUsd: 25000,
+        liquidityUsd: 6500,
+        devHoldingPct: 2,
+        mintAuthorityRevoked: true,
+        freezeAuthorityRevoked: true,
+        lpBurnedOrLockedPct: 100,
+        launchpad: 'pump.fun',
+      },
+    ]);
 
     // Verify triggers
     const triggerRes = await app.inject({

@@ -9,6 +9,7 @@ import { snipeService } from '../snipe/snipe.service.js';
 import { logger } from '../observability/index.js';
 import { heliusOnChainService, normalizeImageUrl } from './helius.service.js';
 import { scoringQueue } from '../queues/index.js';
+import type { PumpFunCoin } from '../discovery/pumpfun.js';
 
 export interface TokenWithLatestSnapshot {
   token: any;
@@ -20,6 +21,243 @@ export interface TokenWithLatestSnapshot {
 export class TokensService {
   constructor() {
     // Database-backed live pipeline only
+  }
+
+  /**
+   * Primary Real-Time Token Ingest: Pump.fun Public API
+   * - Polls every 15s.
+   * - Creates token row and initial snapshot.
+   * - Immediately evaluates risk & snipe rules (< 30s from launch).
+   * - Enqueues BullMQ enrich_token background job using Helius RPC only.
+   */
+  async ingestPumpFunCoin(coin: PumpFunCoin): Promise<{ created: boolean; token: any }> {
+    const mint = coin.mint;
+    if (!mint) return { created: false, token: null };
+
+    // Increment discovery counter
+    try {
+      await prisma.systemCounter.upsert({
+        where: { key: 'pumpfun_discovery_count' },
+        update: { value: { increment: 1 } },
+        create: { key: 'pumpfun_discovery_count', value: BigInt(1) },
+      });
+    } catch {}
+
+    const existing = await prisma.token.findUnique({ where: { mint } });
+    if (existing) {
+      return { created: false, token: existing };
+    }
+
+    const symbol = (coin.symbol || mint.slice(0, 4).toUpperCase()).replace(/[^A-Za-z0-9]/g, '') || 'SOLPUMP';
+    const name = coin.name || `${symbol} Token`;
+    const imageUrl = normalizeImageUrl(coin.image_uri) || null;
+    const now = Date.now();
+
+    // Price calculation from USD market cap or supply
+    let price = 0.00003;
+    if (typeof coin.usd_market_cap === 'number' && coin.usd_market_cap > 0) {
+      price = coin.usd_market_cap / 1_000_000_000;
+    } else if (typeof coin.market_cap === 'number' && coin.market_cap > 0) {
+      price = coin.market_cap / 1_000_000_000;
+    }
+
+    const historyPoint = {
+      t: now,
+      p: price,
+      price,
+      takenAt: new Date(now).toISOString(),
+    };
+
+    const token = await prisma.token.create({
+      data: {
+        mint,
+        symbol,
+        name,
+        imageUrl,
+        decimals: 6,
+        creator: coin.creator || null,
+        priceHistory: [historyPoint],
+        firstSeenAt: new Date(coin.created_timestamp ? Number(coin.created_timestamp) : now),
+      },
+    });
+
+    // Liquidity estimation: 30 SOL * $150 = $4500 base curve liquidity
+    let solReserves = 30;
+    if (coin.virtual_sol_reserves) {
+      const parsed = Number(coin.virtual_sol_reserves);
+      if (!isNaN(parsed) && parsed > 0) {
+        solReserves = parsed > 10_000 ? parsed / 1e9 : parsed;
+      }
+    }
+    const liquidityUsd = Math.round(solReserves * 150) || 4500;
+    const stage = coin.complete ? 'migrated' : 'curve';
+
+    const snapshot = await prisma.tokenSnapshot.create({
+      data: {
+        tokenId: token.id,
+        price,
+        mcap: coin.usd_market_cap ?? (coin.market_cap ?? (price * 1_000_000_000)),
+        liquidityUsd,
+        volume5m: 0,
+        volume1h: 0,
+        volume24h: 0,
+        buys: 0,
+        sells: 0,
+        holderCount: 1,
+        top10Pct: 0,
+        devHoldingPct: 0,
+        mintAuthRevoked: true, // Pump.fun coins have mint & freeze authority revoked by design
+        freezeAuthRevoked: true,
+        lpBurnedOrLockedPct: coin.complete ? 100 : 0,
+        stage,
+        takenAt: new Date(),
+      },
+    });
+
+    // Compute initial risk
+    const risk = evaluateTokenRisk({
+      mintAuthorityRevoked: snapshot.mintAuthRevoked,
+      freezeAuthorityRevoked: snapshot.freezeAuthRevoked,
+      lpBurnedOrLockedPct: snapshot.lpBurnedOrLockedPct,
+      top10Pct: snapshot.top10Pct,
+      devHoldingPct: snapshot.devHoldingPct,
+      liquidityUsd: snapshot.liquidityUsd,
+      mcapUsd: snapshot.mcap,
+      volume5m: snapshot.volume5m,
+      buys5m: snapshot.buys,
+      sells5m: snapshot.sells,
+      holderCount: snapshot.holderCount,
+    });
+
+    // Check snipe alert rules (< 30s from launch)
+    await snipeService.evaluateLaunchAgainstRules({
+      mint,
+      symbol: token.symbol,
+      name: token.name,
+      price: snapshot.price,
+      mcap: snapshot.mcap,
+      liquidityUsd: snapshot.liquidityUsd,
+      riskScore: risk.riskScore,
+      devHoldingPct: snapshot.devHoldingPct,
+      launchpad: 'pump.fun',
+    });
+
+    // Create launch alert
+    const dedupeKey = `launch:${mint}`;
+    try {
+      const existingAlert = await prisma.alert.findUnique({ where: { eventKey: dedupeKey } });
+      if (!existingAlert) {
+        await prisma.alert.create({
+          data: {
+            eventKey: dedupeKey,
+            kind: 'launch',
+            tokenId: token.id,
+            payload: {
+              mint,
+              symbol: token.symbol,
+              name: token.name,
+              price: snapshot.price,
+              mcap: snapshot.mcap,
+              liquidity: snapshot.liquidityUsd,
+              stage: snapshot.stage,
+            },
+          },
+        });
+      }
+    } catch {}
+
+    // Enqueue BullMQ background enrichment job (Helius RPC only: getAsset, getAccountInfo, getTokenLargestAccounts)
+    try {
+      await scoringQueue.add(
+        'enrich_token',
+        { mint, creator: coin.creator || null, stage },
+        {
+          jobId: `enrich:${mint}:${Date.now()}`,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 1000 },
+        }
+      );
+    } catch (qErr: any) {
+      logger.warn(`Could not enqueue enrich_token job for ${mint}:`, qErr.message);
+    }
+
+    // Background asynchronous trigger
+    setImmediate(() => {
+      this.enrichTokenOnChain(mint, coin.creator || null, stage).catch((e) => {
+        logger.warn(`Asynchronous background enrichment error for ${mint}:`, e.message);
+      });
+    });
+
+    return { created: true, token };
+  }
+
+  /**
+   * Secondary Discovery: Ingests newly trending tokens from DexScreener top boosts.
+   */
+  async ingestDexScreenerToken(tokenData: {
+    mint: string;
+    imageUrl?: string | null;
+    description?: string;
+  }): Promise<{ created: boolean; token: any }> {
+    const mint = tokenData.mint;
+    if (!mint) return { created: false, token: null };
+
+    const existing = await prisma.token.findUnique({ where: { mint } });
+    if (existing) {
+      if (tokenData.imageUrl && !existing.imageUrl) {
+        await prisma.token.update({
+          where: { id: existing.id },
+          data: { imageUrl: tokenData.imageUrl },
+        });
+      }
+      return { created: false, token: existing };
+    }
+
+    const now = Date.now();
+    const defaultSym = mint.slice(0, 4).toUpperCase();
+    const initialPrice = 0.0001;
+
+    const token = await prisma.token.create({
+      data: {
+        mint,
+        symbol: defaultSym,
+        name: `${defaultSym} Token`,
+        imageUrl: tokenData.imageUrl || null,
+        decimals: 6,
+        priceHistory: [{ t: now, p: initialPrice, price: initialPrice, takenAt: new Date(now).toISOString() }],
+        firstSeenAt: new Date(),
+      },
+    });
+
+    await prisma.tokenSnapshot.create({
+      data: {
+        tokenId: token.id,
+        price: initialPrice,
+        mcap: initialPrice * 1_000_000_000,
+        liquidityUsd: 10_000,
+        stage: 'migrated',
+        takenAt: new Date(),
+      },
+    });
+
+    // Enqueue BullMQ enrichment
+    try {
+      await scoringQueue.add(
+        'enrich_token',
+        { mint, stage: 'migrated' },
+        {
+          jobId: `enrich:${mint}:${Date.now()}`,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 1000 },
+        }
+      );
+    } catch {}
+
+    setImmediate(() => {
+      this.enrichTokenOnChain(mint, null, 'migrated').catch(() => {});
+    });
+
+    return { created: true, token };
   }
 
   /**

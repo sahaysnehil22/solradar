@@ -29,6 +29,7 @@ import {
 } from './observability/index.js';
 import { heliusOnChainService } from './tokens/helius.service.js';
 import { isRedisConnected } from './queues/redis.js';
+import { startDiscoveryPipelines } from './discovery/index.js';
 
 export async function createServer(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -40,8 +41,10 @@ export async function createServer(): Promise<FastifyInstance> {
   await snipeService.ensureSnipeTables();
   await tokensService.ensureInitialTokensSeeded();
 
-  // Blocker 2: Sync Helius Webhook Addresses on API Startup (never wipe)
-  await heliusOnChainService.syncWebhookAddresses();
+  // Token Discovery Pipeline: Free APIs (pump.fun 15s poller + DexScreener)
+  if (env.NODE_ENV !== 'test') {
+    startDiscoveryPipelines();
+  }
 
   // Global Error Handler: /api/* routes return 401 with clear message on auth failure, never 500
   app.setErrorHandler((error: any, request, reply) => {
@@ -408,8 +411,10 @@ export async function createServer(): Promise<FastifyInstance> {
   app.get('/api/tokens/:mint', handleTokenDetail);
 
   app.post('/tokens/webhook/helius', async (req, reply) => {
-    const events = Array.isArray(req.body) ? req.body : [req.body];
-    return await tokensService.ingestHeliusWebhook(events);
+    return reply.status(410).send({
+      error: 'Gone',
+      message: 'Helius webhooks have been deprecated and retired. Token discovery runs via free public APIs.',
+    });
   });
 
   // 5. Snipe Alerts (Signals-Only Engine)

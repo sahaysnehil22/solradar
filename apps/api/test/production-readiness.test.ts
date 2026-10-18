@@ -2,12 +2,14 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { FastifyInstance } from 'fastify';
 import { createServer } from '../src/server.js';
 import {
-  heliusOnChainService,
   PUMP_FUN_PROGRAM,
   RAYDIUM_PROGRAM,
   MANDATORY_PROGRAM_ADDRESSES,
 } from '../src/tokens/helius.service.js';
 import { prisma } from '../src/db/prisma.js';
+import { PumpFunDiscoveryService } from '../src/discovery/pumpfun.js';
+import { DexScreenerDiscoveryService } from '../src/discovery/dexscreener.js';
+import { tokensService } from '../src/tokens/tokens.service.js';
 
 describe('Production Readiness & Blocker Hardening Test Suite', () => {
   let app: FastifyInstance;
@@ -20,35 +22,35 @@ describe('Production Readiness & Blocker Hardening Test Suite', () => {
     await app.close();
   });
 
-  describe('Blocker 1 — Real Data Pipeline Migration & Webhook Ingest', () => {
-    it('successfully processes POST /tokens/webhook/helius with 200 and persists real data without P2022', async () => {
-      const testMint = `MigrationVerifyMint${Date.now()}111111111111`;
+  describe('Discovery Pipeline & Webhook Deprecation', () => {
+    it('returns HTTP 410 Gone on POST /tokens/webhook/helius (Helius webhook retired)', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/tokens/webhook/helius',
-        payload: [
-          {
-            mint: testMint,
-            symbol: 'REALMIG',
-            name: 'Real Migration Token',
-            imageUrl: 'https://ipfs.io/ipfs/QmVerifiedHash1111111111111111111111111',
-            priceUsd: 0.0035,
-            mcapUsd: 350000,
-            liquidityUsd: 70000,
-            holderCount: 412,
-            top10Pct: 21.4,
-            devHoldingPct: 1.1,
-            mintAuthorityRevoked: true,
-            freezeAuthorityRevoked: true,
-            lpBurnedOrLockedPct: 100,
-            stage: 'migrated',
-          },
-        ],
+        payload: [{ mint: 'SomeOldWebhookPayload' }],
       });
 
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(410);
       const json = JSON.parse(res.body);
-      expect(json.processedCount).toBe(1);
+      expect(json.error).toBe('Gone');
+      expect(json.message).toContain('deprecated');
+    });
+
+    it('successfully ingests pump.fun coin and persists real data without P2022', async () => {
+      const testMint = `MigrationVerifyMint${Date.now()}111111111111`;
+      const coin = {
+        mint: testMint,
+        symbol: 'REALMIG',
+        name: 'Real Migration Token',
+        image_uri: 'https://ipfs.io/ipfs/QmVerifiedHash1111111111111111111111111',
+        created_timestamp: Date.now(),
+        usd_market_cap: 350000,
+        virtual_sol_reserves: 30,
+        complete: true,
+      };
+
+      const result = await tokensService.ingestPumpFunCoin(coin);
+      expect(result.created).toBe(true);
 
       // Verify token row was created in DB with real columns (imageUrl, priceHistory)
       const token = await prisma.token.findUnique({ where: { mint: testMint } });
@@ -56,115 +58,117 @@ describe('Production Readiness & Blocker Hardening Test Suite', () => {
       expect(token?.imageUrl).toBe('https://ipfs.io/ipfs/QmVerifiedHash1111111111111111111111111');
       expect(Array.isArray(token?.priceHistory)).toBe(true);
       expect((token?.priceHistory as any[]).length).toBe(1);
-    });
-  });
 
-  describe('Blocker 2 — Helius Webhook Addresses Boot Sync (Regression Guard)', () => {
-    it('defines mandatory Pump.fun and Raydium program addresses', () => {
+      // Verify token snapshot was created with real values
+      const snapshots = await prisma.tokenSnapshot.findMany({ where: { tokenId: token!.id } });
+      expect(snapshots.length).toBeGreaterThan(0);
+      const snapshot = snapshots[0];
+      expect(snapshot?.mcap).toBe(350000);
+      expect(snapshot?.mintAuthRevoked).toBe(true);
+      expect(snapshot?.freezeAuthRevoked).toBe(true);
+      expect(snapshot?.stage).toBe('migrated');
+    });
+
+    it('defines standard Pump.fun and Raydium program addresses', () => {
       expect(PUMP_FUN_PROGRAM).toBe('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P');
       expect(RAYDIUM_PROGRAM).toBe('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8');
       expect(MANDATORY_PROGRAM_ADDRESSES).toContain('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P');
       expect(MANDATORY_PROGRAM_ADDRESSES).toContain('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8');
     });
 
-    it('restores watched program addresses when remote webhook addresses are empty or missing', async () => {
-      // Mock fetch to simulate Helius webhook GET returning empty accountAddresses
+    it('PumpFunDiscoveryService handles 429 Too Many Requests with exponential backoff', async () => {
+      const discovery = new PumpFunDiscoveryService();
       const originalFetch = global.fetch;
-      let lastPutPayload: any = null;
 
-      global.fetch = vi.fn(async (url: any, opts: any) => {
-        const urlStr = url.toString();
-        if (urlStr.includes('/v0/webhooks') && (!opts || opts.method === 'GET')) {
-          return {
-            ok: true,
-            status: 200,
-            json: async () => ({
-              webhookID: '4fbc8fb3-863e-47e2-b164-b24afb4ae0a3',
-              webhookURL: 'https://api.solradar.io/tokens/webhook/helius',
-              accountAddresses: [], // EMPTY! The blocker bug
-              transactionTypes: ['Any'],
-              webhookType: 'enhanced',
-            }),
-          } as any;
-        }
-        if (urlStr.includes('/v0/webhooks') && opts?.method === 'PUT') {
-          lastPutPayload = JSON.parse(opts.body);
-          return {
-            ok: true,
-            status: 200,
-            json: async () => lastPutPayload,
-          } as any;
-        }
-        return originalFetch(url, opts);
-      }) as any;
+      global.fetch = vi.fn(async () => ({
+        status: 429,
+        ok: false,
+      } as any));
 
       try {
-        const result = await heliusOnChainService.syncWebhookAddresses('test_key_for_mock');
-
-        // Must report 'added' (restored)
-        expect(result.status).toBe('added');
-        expect(result.addresses).toContain(PUMP_FUN_PROGRAM);
-        expect(result.addresses).toContain(RAYDIUM_PROGRAM);
-
-        // Verify PUT payload NEVER sent an empty array
-        expect(lastPutPayload.accountAddresses.length).toBeGreaterThanOrEqual(2);
-        expect(lastPutPayload.accountAddresses).toContain(PUMP_FUN_PROGRAM);
-        expect(lastPutPayload.accountAddresses).toContain(RAYDIUM_PROGRAM);
+        const coins = await discovery.fetchLatestCoins();
+        expect(coins).toEqual([]);
+        expect(discovery.getInterval()).toBe(30000); // doubled from 15000 to 30000
       } finally {
         global.fetch = originalFetch;
       }
     });
 
-    it('does not overwrite or wipe accountAddresses when both program addresses are already present', async () => {
-      const existingWatched = [
-        PUMP_FUN_PROGRAM,
-        RAYDIUM_PROGRAM,
-        'CustomTrackedWallet111111111111111111111111',
-      ];
+    it('PumpFunDiscoveryService parses coins and triggers ingest in pollOnce', async () => {
+      const discovery = new PumpFunDiscoveryService();
+      const sampleMint = `PumpFunSampleMint${Date.now()}11111111111`;
       const originalFetch = global.fetch;
-      let putCalled = false;
 
-      global.fetch = vi.fn(async (url: any, opts: any) => {
-        const urlStr = url.toString();
-        if (urlStr.includes('/v0/webhooks') && (!opts || opts.method === 'GET')) {
+      global.fetch = vi.fn(async (url: any) => {
+        if (url.toString().includes('pump.fun')) {
           return {
-            ok: true,
             status: 200,
-            json: async () => ({
-              webhookID: '4fbc8fb3-863e-47e2-b164-b24afb4ae0a3',
-              webhookURL: 'https://api.solradar.io/tokens/webhook/helius',
-              accountAddresses: existingWatched,
-              transactionTypes: ['Any'],
-              webhookType: 'enhanced',
-            }),
+            ok: true,
+            json: async () => [
+              {
+                mint: sampleMint,
+                name: 'Pump Discovery Coin',
+                symbol: 'PDISC',
+                image_uri: 'https://cf-ipfs.com/ipfs/QmTestImage',
+                created_timestamp: Date.now(),
+                usd_market_cap: 60000,
+                virtual_sol_reserves: 35,
+                complete: false,
+              },
+            ],
           } as any;
         }
-        if (urlStr.includes('/v0/webhooks') && opts?.method === 'PUT') {
-          putCalled = true;
-          return { ok: true, status: 200, json: async () => ({}) } as any;
-        }
-        return originalFetch(url, opts);
-      }) as any;
+        return originalFetch(url);
+      });
 
       try {
-        const result = await heliusOnChainService.syncWebhookAddresses('test_key_for_mock');
+        const result = await discovery.pollOnce();
+        expect(result.fetched).toBe(1);
+        expect(result.newCoins).toBe(1);
 
-        // Must report 'already_present' and not issue a PUT overwrite
-        expect(result.status).toBe('already_present');
-        expect(putCalled).toBe(false);
-        expect(result.addresses).toEqual(existingWatched);
+        const found = await prisma.token.findUnique({ where: { mint: sampleMint } });
+        expect(found).not.toBeNull();
+        expect(found?.symbol).toBe('PDISC');
       } finally {
         global.fetch = originalFetch;
       }
     });
 
-    it('regression test: consecutive restarts do not wipe program addresses', async () => {
-      // Simulate 2 restarts
-      const sync1 = await heliusOnChainService.syncWebhookAddresses();
-      const sync2 = await heliusOnChainService.syncWebhookAddresses();
+    it('DexScreenerDiscoveryService fetches token metadata and handles 429 backoff gracefully', async () => {
+      const dexScreener = new DexScreenerDiscoveryService();
+      const originalFetch = global.fetch;
 
-      expect(['added', 'already_present', 'skipped']).toContain(sync1.status);
-      expect(['added', 'already_present', 'skipped']).toContain(sync2.status);
+      global.fetch = vi.fn(async (url: any) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/latest/dex/tokens/')) {
+          return {
+            status: 200,
+            ok: true,
+            json: async () => ({
+              pairs: [
+                {
+                  baseToken: { address: 'DexMint11111111111111111111111111111111', name: 'Dex Coin', symbol: 'DEXC' },
+                  priceUsd: '0.045',
+                  marketCap: 450000,
+                  info: {
+                    imageUrl: 'https://dexscreener.com/token.png',
+                  },
+                },
+              ],
+            }),
+          } as any;
+        }
+        return originalFetch(url);
+      });
+
+      try {
+        const meta = await dexScreener.fetchTokenMetadata('DexMint11111111111111111111111111111111');
+        expect(meta).not.toBeNull();
+        expect(meta?.name).toBe('Dex Coin');
+        expect(meta?.imageUrl).toBe('https://dexscreener.com/token.png');
+      } finally {
+        global.fetch = originalFetch;
+      }
     });
   });
 
@@ -178,11 +182,7 @@ describe('Production Readiness & Blocker Hardening Test Suite', () => {
         priceUsd: 0.001 + (i + 1) * 0.00001,
       }));
 
-      await app.inject({
-        method: 'POST',
-        url: '/tokens/webhook/helius',
-        payload: events,
-      });
+      await tokensService.ingestHeliusWebhook(events);
 
       const token = await prisma.token.findUnique({ where: { mint: testMint } });
       const history = (token?.priceHistory as any[]) || [];
@@ -203,17 +203,13 @@ describe('Production Readiness & Blocker Hardening Test Suite', () => {
 
     it('does not store hardcoded fake placeholder values (25 holders, 35% top10, 2% dev) on bare webhook event', async () => {
       const bareMint = `BareEventMint${Date.now()}11111111111111`;
-      await app.inject({
-        method: 'POST',
-        url: '/tokens/webhook/helius',
-        payload: [
-          {
-            mint: bareMint,
-            priceUsd: 0.0004,
-            // Notice: holderCount, top10Pct, devHoldingPct are intentionally omitted
-          },
-        ],
-      });
+      await tokensService.ingestHeliusWebhook([
+        {
+          mint: bareMint,
+          priceUsd: 0.0004,
+          // Notice: holderCount, top10Pct, devHoldingPct are intentionally omitted
+        },
+      ]);
 
       const token = await prisma.token.findUnique({ where: { mint: bareMint } });
       const snapshots = await prisma.tokenSnapshot.findMany({ where: { tokenId: token?.id } });
