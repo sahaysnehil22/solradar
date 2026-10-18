@@ -53,18 +53,18 @@ export class BackgroundWorker {
     this.setupWorkerHooks(ingestWorker, dlqIngestQueue, QUEUE_NAMES.INGEST);
     this.workers.push(ingestWorker);
 
-    // 2. Scoring Queue Processor
+    // 2. Scoring & On-Chain Enrichment Queue Processor
     const scoringWorker = new Worker(
       QUEUE_NAMES.SCORING,
       async (job: Job) => {
-        logger.info(`Processing scoring job ${job.id}`, { name: job.name });
-        const { mint } = job.data;
+        logger.info(`Processing scoring/enrichment job ${job.id}`, { name: job.name });
+        const { mint, creator, stage } = job.data;
         if (mint) {
-          return await tokensService.getTokenDetail(mint);
+          return await tokensService.enrichTokenOnChain(mint, creator, stage);
         }
         return { scored: true };
       },
-      { connection, concurrency: 5 }
+      { connection, concurrency: 2 }
     );
     this.setupWorkerHooks(scoringWorker, dlqScoringQueue, QUEUE_NAMES.SCORING);
     this.workers.push(scoringWorker);

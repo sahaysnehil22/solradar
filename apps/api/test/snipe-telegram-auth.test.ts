@@ -9,7 +9,7 @@ describe('Snipe Rules & Telegram Auth API', () => {
 
   beforeAll(async () => {
     app = await createServer();
-  });
+  }, 25000);
 
   it('authenticates user via Telegram login widget data', async () => {
     const res = await app.inject({

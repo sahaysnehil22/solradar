@@ -203,6 +203,14 @@ export default function MarketingLandingPage() {
                       <tr key={token.id}>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {token.imageUrl ? (
+                              <img
+                                src={token.imageUrl.startsWith('ipfs://') ? token.imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/') : token.imageUrl}
+                                alt={token.symbol}
+                                style={{ width: '24px', height: '24px', borderRadius: '50%', objectFit: 'cover' }}
+                                onError={(e) => { (e.currentTarget as any).style.display = 'none'; }}
+                              />
+                            ) : null}
                             <span style={{ fontWeight: 800 }}>${token.symbol}</span>
                             <span style={{ color: 'var(--text-sub)', fontSize: '11px' }}>{token.name}</span>
                           </div>

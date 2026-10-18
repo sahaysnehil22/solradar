@@ -192,8 +192,10 @@ model Token {
   mint          String   @unique
   symbol        String
   name          String
+  imageUrl      String?  @map("image_url")
   decimals      Int      @default(6)
   creator       String?
+  priceHistory  Json?    @default("[]") @map("price_history")
   createdAtSlot BigInt?  @map("created_at_slot")
   firstSeenAt   DateTime @default(now()) @map("first_seen_at")
 
@@ -222,6 +224,7 @@ model TokenSnapshot {
   holderCount         Int      @default(0) @map("holder_count")
   top10Pct            Float    @default(0) @map("top10_pct")
   devHoldingPct       Float    @default(0) @map("dev_holding_pct")
+  topHolders         Json?    @default("[]") @map("top_holders")
   mintAuthRevoked     Boolean  @default(false) @map("mint_auth_revoked")
   freezeAuthRevoked   Boolean  @default(false) @map("freeze_auth_revoked")
   lpBurnedOrLockedPct Float    @default(0) @map("lp_burned_or_locked_pct")

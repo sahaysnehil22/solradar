@@ -158,21 +158,41 @@ export default function PulsePage() {
                 >
                   {/* Token & Stage */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: '220px' }}>
-                    <div style={{
-                      width: '32px',
-                      height: '32px',
-                      borderRadius: 'var(--radius)',
-                      background: 'var(--bg-secondary)',
-                      border: '1px solid var(--border-color)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontWeight: 800,
-                      fontSize: '11px',
-                      color: 'var(--accent)',
-                    }}>
-                      {token.symbol.substring(0, 3)}
-                    </div>
+                    {token.imageUrl ? (
+                      <img
+                        src={token.imageUrl.startsWith('ipfs://') ? token.imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/') : token.imageUrl}
+                        alt={token.symbol}
+                        style={{
+                          width: '32px',
+                          height: '32px',
+                          borderRadius: '50%',
+                          objectFit: 'cover',
+                          border: '1px solid var(--border-color)',
+                          background: 'var(--bg-secondary)',
+                          flexShrink: 0,
+                        }}
+                        onError={(e) => {
+                          (e.currentTarget as any).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <div style={{
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '50%',
+                        background: 'var(--bg-secondary)',
+                        border: '1px solid var(--border-color)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontWeight: 800,
+                        fontSize: '11px',
+                        color: 'var(--accent)',
+                        flexShrink: 0,
+                      }}>
+                        {token.symbol.substring(0, 3)}
+                      </div>
+                    )}
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <span style={{ fontWeight: 800, fontSize: '14px' }}>${token.symbol}</span>

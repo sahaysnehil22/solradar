@@ -18,6 +18,8 @@ const EnvSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(16).default('solradar_default_refresh_secret_32char_min'),
   BILLING_PROVIDER: z.enum(['noop', 'stripe']).default('noop'),
   WEB_BASE_URL: z.string().optional().default('http://localhost:3000'),
+  HELIUS_API_KEY: z.string().optional().default(''),
+  HELIUS_RPC_URL: z.string().optional().default('https://mainnet.helius-rpc.com'),
   HELIUS_WEBHOOK_SECRET: z.string().optional().default('test_helius_secret'),
   TELEGRAM_BOT_TOKEN: z.string().optional().default('dummy_token_dev'),
 });

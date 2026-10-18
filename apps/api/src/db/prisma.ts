@@ -452,15 +452,63 @@ class InMemoryDbAdapter {
           mint: data.mint,
           symbol: data.symbol,
           name: data.name,
+          imageUrl: data.imageUrl || null,
           decimals: data.decimals ?? 6,
           creator: data.creator || null,
+          priceHistory: data.priceHistory || [],
           createdAtSlot: data.createdAtSlot ? BigInt(data.createdAtSlot) : null,
           firstSeenAt: data.firstSeenAt || new Date(),
         };
         this.tokens.set(id, record);
         return record;
       },
-      count: async () => this.tokens.size,
+      update: async ({ where, data }: any) => {
+        let record = where.id ? this.tokens.get(where.id) : null;
+        if (!record && where.mint) {
+          for (const t of this.tokens.values()) {
+            if (t.mint === where.mint) {
+              record = t;
+              break;
+            }
+          }
+        }
+        if (!record) throw new Error('Token not found');
+        const updated = { ...record, ...data };
+        this.tokens.set(record.id, updated);
+        return updated;
+      },
+      deleteMany: async ({ where }: any = {}) => {
+        let deleted = 0;
+        for (const [id, t] of Array.from(this.tokens.entries())) {
+          if (where?.OR) {
+            const matches = where.OR.some((cond: any) => {
+              if (cond.symbol && t.symbol === cond.symbol) return true;
+              if (cond.name && t.name === cond.name) return true;
+              return false;
+            });
+            if (matches) {
+              this.tokens.delete(id);
+              deleted++;
+            }
+          }
+        }
+        return { count: deleted };
+      },
+      count: async ({ where }: any = {}) => {
+        if (where?.NOT?.OR) {
+          let count = 0;
+          for (const t of this.tokens.values()) {
+            const matches = where.NOT.OR.some((cond: any) => {
+              if (cond.symbol && t.symbol === cond.symbol) return true;
+              if (cond.name && t.name === cond.name) return true;
+              return false;
+            });
+            if (!matches) count++;
+          }
+          return count;
+        }
+        return this.tokens.size;
+      },
     };
   }
 
@@ -494,6 +542,7 @@ class InMemoryDbAdapter {
           holderCount: Number(data.holderCount ?? 0),
           top10Pct: Number(data.top10Pct ?? 0),
           devHoldingPct: Number(data.devHoldingPct ?? 0),
+          topHolders: data.topHolders || [],
           mintAuthRevoked: Boolean(data.mintAuthRevoked),
           freezeAuthRevoked: Boolean(data.freezeAuthRevoked),
           lpBurnedOrLockedPct: Number(data.lpBurnedOrLockedPct ?? 0),
@@ -502,6 +551,18 @@ class InMemoryDbAdapter {
         };
         this.tokenSnapshots.set(id, record);
         return record;
+      },
+      update: async ({ where, data }: any) => {
+        const record = this.tokenSnapshots.get(where.id);
+        if (!record) throw new Error('TokenSnapshot not found');
+        const updated = { ...record, ...data };
+        this.tokenSnapshots.set(where.id, updated);
+        return updated;
+      },
+      deleteMany: async () => {
+        const count = this.tokenSnapshots.size;
+        this.tokenSnapshots.clear();
+        return { count };
       },
       count: async () => this.tokenSnapshots.size,
     };

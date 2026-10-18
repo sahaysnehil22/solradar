@@ -83,9 +83,16 @@ export function SearchIcon({ size = 14, className = '' }: { size?: number; class
   );
 }
 
-export function SparklineSvg({ data = [], width = 70, height = 20, isUp = true }: { data?: number[]; width?: number; height?: number; isUp?: boolean }) {
-  if (!data || data.length < 2) {
-    return <span style={{ width, height, display: 'inline-block' }} />;
+export function SparklineSvg({ data = [], width = 70, height = 20, isUp }: { data?: number[]; width?: number; height?: number; isUp?: boolean }) {
+  if (!data || data.length === 0) {
+    return <span style={{ width, height, display: 'inline-block', opacity: 0.3, textAlign: 'center', fontSize: '11px' }}>—</span>;
+  }
+  if (data.length === 1) {
+    return (
+      <svg width={width} height={height} className="sparkline" style={{ overflow: 'visible' }}>
+        <line x1="0" y1={height / 2} x2={width} y2={height / 2} stroke="var(--text-sub)" strokeWidth="1.5" strokeDasharray="3,3" />
+      </svg>
+    );
   }
   const min = Math.min(...data);
   const max = Math.max(...data);
@@ -99,11 +106,13 @@ export function SparklineSvg({ data = [], width = 70, height = 20, isUp = true }
     })
     .join(' ');
 
-  const strokeColor = isUp ? 'var(--up)' : 'var(--down)';
+  // Green if first -> last is positive, red if negative (Axiom style)
+  const isPositive = isUp !== undefined ? isUp : data[data.length - 1] >= data[0];
+  const strokeColor = isPositive ? 'var(--up)' : 'var(--down)';
 
   return (
     <svg width={width} height={height} className="sparkline" style={{ overflow: 'visible' }}>
-      <polyline fill="none" stroke={strokeColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" points={points} />
+      <polyline fill="none" stroke={strokeColor} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" points={points} />
     </svg>
   );
 }

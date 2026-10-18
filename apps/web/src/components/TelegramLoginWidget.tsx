@@ -52,27 +52,6 @@ export function TelegramLoginWidget({
     };
   }, [botName, size, onSuccess]);
 
-  const handleQuickDemoLogin = async () => {
-    setAuthenticating(true);
-    setError(null);
-    try {
-      // Instant dev / test authentication flow with verified test hash
-      const testPayload = {
-        id: 8943169326,
-        first_name: 'Solana',
-        username: 'SolRadarTrader',
-        auth_date: Math.floor(Date.now() / 1000),
-        hash: 'test_mock_hash',
-      };
-      const result = await loginWithTelegram(testPayload);
-      onSuccess(result.user);
-    } catch (err: any) {
-      setError(err.message || 'Demo authentication failed');
-    } finally {
-      setAuthenticating(false);
-    }
-  };
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
       {/* Official Telegram Login Widget Container */}
@@ -92,22 +71,6 @@ export function TelegramLoginWidget({
           {error}
         </div>
       )}
-
-      {/* Dev / Test mode instant access button */}
-      <div style={{ width: '100%', borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', textAlign: 'center' }}>
-        <button
-          type="button"
-          onClick={handleQuickDemoLogin}
-          disabled={authenticating}
-          className="btn btn-secondary"
-          style={{ width: '100%', fontSize: '12px', padding: '8px 12px' }}
-        >
-          ⚡ Instant Test Login (Developer / Demo)
-        </button>
-        <span style={{ fontSize: '10px', color: 'var(--text-sub)', marginTop: '4px', display: 'block' }}>
-          Issues a real signed backend JWT without requiring Telegram app focus
-        </span>
-      </div>
     </div>
   );
 }

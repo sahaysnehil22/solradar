@@ -62,6 +62,7 @@ export const TokenSnapshotDtoSchema = z.object({
   mint: z.string().min(32).max(44),
   symbol: z.string().min(1).max(20),
   name: z.string().min(1).max(100),
+  imageUrl: z.string().optional().nullable(),
   decimals: z.number().int().min(0).max(18).default(6),
   creator: z.string().min(32).max(44).nullable().optional(),
   priceUsd: z.number().nonnegative(),
