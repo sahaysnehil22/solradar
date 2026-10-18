@@ -607,5 +607,18 @@ export async function createServer(): Promise<FastifyInstance> {
     };
   });
 
+  // Standalone price sampler fallback (every 20s when not in test suite)
+  if (env.NODE_ENV !== 'test') {
+    const samplerInterval = setInterval(() => {
+      tokensService.sampleActiveTokenPrices().catch((err: any) => {
+        logger.warn('Periodic price sampler error (server fallback):', err.message);
+      });
+    }, 20000);
+    app.addHook('onClose', (_instance, done) => {
+      clearInterval(samplerInterval);
+      done();
+    });
+  }
+
   return app;
 }

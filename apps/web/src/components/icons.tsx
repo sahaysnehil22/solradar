@@ -84,24 +84,26 @@ export function SearchIcon({ size = 14, className = '' }: { size?: number; class
 }
 
 export function SparklineSvg({ data = [], width = 70, height = 20, isUp }: { data?: number[]; width?: number; height?: number; isUp?: boolean }) {
-  if (!data || data.length === 0) {
-    return <span style={{ width, height, display: 'inline-block', opacity: 0.3, textAlign: 'center', fontSize: '11px' }}>—</span>;
-  }
-  if (data.length === 1) {
+  if (!data || data.length < 3) {
     return (
-      <svg width={width} height={height} className="sparkline" style={{ overflow: 'visible' }}>
-        <line x1="0" y1={height / 2} x2={width} y2={height / 2} stroke="var(--text-sub)" strokeWidth="1.5" strokeDasharray="3,3" />
-      </svg>
+      <span style={{ fontSize: '10px', color: 'var(--text-sub)', fontStyle: 'italic', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+        <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#f59e0b', display: 'inline-block' }} />
+        collecting…
+      </span>
     );
   }
   const min = Math.min(...data);
   const max = Math.max(...data);
-  const range = max - min || 1;
+  const delta = max - min;
+  const padding = delta === 0 ? (min * 0.005 || 0.000001) : delta * 0.08;
+  const yMin = min - padding;
+  const yMax = max + padding;
+  const range = yMax - yMin || 1;
 
   const points = data
     .map((val, idx) => {
       const x = (idx / (data.length - 1)) * width;
-      const y = height - ((val - min) / range) * (height - 4) - 2;
+      const y = height - ((val - yMin) / range) * (height - 4) - 2;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(' ');
@@ -112,7 +114,7 @@ export function SparklineSvg({ data = [], width = 70, height = 20, isUp }: { dat
 
   return (
     <svg width={width} height={height} className="sparkline" style={{ overflow: 'visible' }}>
-      <polyline fill="none" stroke={strokeColor} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" points={points} />
+      <polyline fill="none" stroke={strokeColor} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" points={points} />
     </svg>
   );
 }

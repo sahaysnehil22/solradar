@@ -147,6 +147,8 @@ export class BackgroundWorker {
           return await this.runHourlyPortfolioSnapshots();
         } else if (job.name === 'counter-reset') {
           return await this.resetDailyCounters();
+        } else if (job.name === 'price-sampler') {
+          return await this.runPriceSampler();
         }
         return { completed: true };
       },
@@ -211,6 +213,16 @@ export class BackgroundWorker {
           jobId: 'repeatable:counter_reset',
         }
       );
+
+      // Repeatable job 3: Price sampler every 20 seconds (BullMQ recurring)
+      await maintenanceQueue.add(
+        'price-sampler',
+        { type: 'price_sampler' },
+        {
+          repeat: { every: 20000 },
+          jobId: 'repeatable:price_sampler',
+        }
+      );
     } catch (e: any) {
       logger.warn('Repeatable jobs registration handled:', e.message);
     }
@@ -268,6 +280,27 @@ export class BackgroundWorker {
       });
       logger.info('Daily RPC budget burn counter reset');
       return { reset: true };
+    } finally {
+      await lock.release();
+    }
+  }
+
+  /**
+   * Recurring Price Sampler Runner with Distributed Lock (runs every 20 seconds).
+   * Ensures only one worker node samples prices across all Render replicas.
+   */
+  async runPriceSampler() {
+    const redis = getRedisClient();
+    const lock = await acquireDistributedLock(redis, 'lock:maintenance:price_sampler', 15000);
+
+    if (!lock.acquired) {
+      logger.info('Price sampler skipped: lock held by another worker instance');
+      return { skipped: true, reason: 'lock_held' };
+    }
+
+    try {
+      const result = await tokensService.sampleActiveTokenPrices();
+      return { completed: true, ...result };
     } finally {
       await lock.release();
     }

@@ -12,6 +12,7 @@ import {
   CheckIcon,
 } from '../../../components/icons';
 import { PriceChart } from '../../../components/PriceChart';
+import { TrendAreaChart } from '../../../components/TrendAreaChart';
 
 /**
  * Reusable Token Avatar with IPFS normalization & fallback
@@ -472,9 +473,15 @@ export default function DiscoverPage() {
                         </div>
                       </td>
 
-                      {/* Fix 3: Real Price History Sparkline (green for gain, red for loss) */}
+                      {/* Live Trend Area Chart (auto-scales Y-axis, green/red gradient, thin stroke, % change) */}
                       <td style={{ textAlign: 'center' }}>
-                        <SparklineSvg data={sparkline} width={68} height={20} />
+                        <TrendAreaChart
+                          data={token.priceHistory && token.priceHistory.length > 0 ? token.priceHistory : sparkline}
+                          timeframe={timeRange}
+                          width={78}
+                          height={22}
+                          showPercentChange={true}
+                        />
                       </td>
 
                       {/* Fix 4: Risk Score Badge (green <30, yellow 30-69, red 70+) */}

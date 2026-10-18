@@ -168,12 +168,12 @@ describe('Production Readiness & Blocker Hardening Test Suite', () => {
     });
   });
 
-  describe('Blocker 3 — Real Risk Data Pipeline & Capped 100-Point Price History', () => {
-    it('ingests price snapshots and caps price_history at 100 points', async () => {
+  describe('Blocker 3 — Real Risk Data Pipeline & Capped 200-Point Price History', () => {
+    it('ingests price snapshots and caps price_history at 200 points', async () => {
       const testMint = `CappedPriceHistoryMint${Date.now()}1111111`;
 
-      // Ingest 105 price updates in batch
-      const events = Array.from({ length: 105 }, (_, i) => ({
+      // Ingest 205 price updates in batch
+      const events = Array.from({ length: 205 }, (_, i) => ({
         mint: testMint,
         priceUsd: 0.001 + (i + 1) * 0.00001,
       }));
@@ -187,9 +187,9 @@ describe('Production Readiness & Blocker Hardening Test Suite', () => {
       const token = await prisma.token.findUnique({ where: { mint: testMint } });
       const history = (token?.priceHistory as any[]) || [];
 
-      // Must be capped at exactly 100 points (last 100)
-      expect(history.length).toBe(100);
-      expect(history[history.length - 1].price).toBeCloseTo(0.001 + 105 * 0.00001, 5);
+      // Must be capped at exactly 200 points (last 200)
+      expect(history.length).toBe(200);
+      expect(history[history.length - 1].price).toBeCloseTo(0.001 + 205 * 0.00001, 5);
 
       // Verify /tokens/:mint returns real sparklines from the capped series
       const detailRes = await app.inject({
@@ -198,7 +198,7 @@ describe('Production Readiness & Blocker Hardening Test Suite', () => {
       });
       expect(detailRes.statusCode).toBe(200);
       const detail = JSON.parse(detailRes.body);
-      expect(detail.sparkline.length).toBe(100);
+      expect(detail.sparkline.length).toBe(200);
     });
 
     it('does not store hardcoded fake placeholder values (25 holders, 35% top10, 2% dev) on bare webhook event', async () => {

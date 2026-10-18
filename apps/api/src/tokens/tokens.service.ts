@@ -83,10 +83,16 @@ export class TokensService {
 
       let token = await prisma.token.findUnique({ where: { mint } });
       const defaultSym = (evt.symbol || mint.slice(0, 4).toUpperCase()).replace(/[^A-Z0-9]/g, '') || 'SOLPUMP';
+      const now = Date.now();
       const price = typeof evt.priceUsd === 'number' && !isNaN(evt.priceUsd) && evt.priceUsd > 0
         ? evt.priceUsd
         : 0.0001;
-      const historyPoint = { price, takenAt: new Date().toISOString() };
+      const historyPoint = {
+        t: now,
+        p: price,
+        price,
+        takenAt: new Date(now).toISOString(),
+      };
 
       if (!token) {
         token = await prisma.token.create({
@@ -103,8 +109,8 @@ export class TokensService {
         });
       } else {
         const existingHistory = Array.isArray(token.priceHistory) ? token.priceHistory : [];
-        // Price history capped at last 100 points
-        const updatedHistory = [...existingHistory, historyPoint].slice(-100);
+        // Price history capped at last 200 points
+        const updatedHistory = [...existingHistory, historyPoint].slice(-200);
         try {
           token = await prisma.token.update({
             where: { id: token.id },
@@ -233,6 +239,8 @@ export class TokensService {
       const creator = creatorAddress || assetMeta?.creator || token?.creator || null;
 
       if (!token) {
+        const now = Date.now();
+        const launchPrice = 0.0001;
         token = await prisma.token.create({
           data: {
             mint,
@@ -241,7 +249,7 @@ export class TokensService {
             imageUrl: imageUrl || null,
             decimals: assetMeta?.decimals ?? 6,
             creator,
-            priceHistory: [],
+            priceHistory: [{ t: now, p: launchPrice, price: launchPrice, takenAt: new Date(now).toISOString() }],
             firstSeenAt: new Date(),
           },
         });
@@ -432,13 +440,13 @@ export class TokensService {
 
         if (query.maxRiskScore && risk.riskScore > query.maxRiskScore) continue;
 
-        // Real Sparklines from token.priceHistory (capped at last 100 points)
+        // Real Sparklines from token.priceHistory (capped at last 200 points)
         const history = Array.isArray(token.priceHistory) ? token.priceHistory : [];
         const realPrices: number[] = history
-          .map((p: any) => (typeof p === 'number' ? p : p?.price))
+          .map((p: any) => (typeof p === 'number' ? p : p?.p ?? p?.price))
           .filter((n: any) => typeof n === 'number' && !isNaN(n));
 
-        const sparkline = realPrices.length >= 2 ? realPrices : [latestSnapshot.price, latestSnapshot.price];
+        const sparkline = realPrices.slice(-200);
 
         list.push({ token, snapshot: latestSnapshot, risk, sparkline });
       }
@@ -518,15 +526,141 @@ export class TokensService {
       holderCount: latestSnapshot.holderCount,
     });
 
-    // Real Sparklines from token.priceHistory (capped at last 100 points)
+    // Real Sparklines from token.priceHistory (capped at last 200 points)
     const history = Array.isArray(token.priceHistory) ? token.priceHistory : [];
     const realPrices: number[] = history
-      .map((p: any) => (typeof p === 'number' ? p : p?.price))
+      .map((p: any) => (typeof p === 'number' ? p : p?.p ?? p?.price))
       .filter((n: any) => typeof n === 'number' && !isNaN(n));
 
-    const sparkline = realPrices.length >= 2 ? realPrices : [latestSnapshot.price, latestSnapshot.price];
+    const sparkline = realPrices.slice(-200);
 
     return { token, snapshot: latestSnapshot, risk, sparkline };
+  }
+
+  /**
+   * Price Sampler Worker:
+   * - Recurring BullMQ job (every 20s) for top 100 most active tokens.
+   * - Batches Jupiter price API v3: https://lite-api.jup.ag/price/v3?ids=<mints>
+   * - Fallback to DexScreener batch tokens API for early bonding curve tokens.
+   * - Appends { t: timestamp, p: price, price, takenAt } to tokens.price_history, capped at 200 points.
+   * - Zero Helius RPC credits consumed.
+   */
+  async sampleActiveTokenPrices(): Promise<{ sampled: number; updated: number }> {
+    try {
+      const tokens = await prisma.token.findMany({
+        take: 100,
+        orderBy: { firstSeenAt: 'desc' },
+        select: { id: true, mint: true, priceHistory: true },
+      });
+
+      if (!tokens || tokens.length === 0) {
+        return { sampled: 0, updated: 0 };
+      }
+
+      const mints = tokens.map((t) => t.mint);
+      const priceMap = new Map<string, number>();
+
+      // 1. Batch Jupiter Price API v3 (free, up to 100 mints in a single HTTP request)
+      try {
+        const jupUrl = `https://lite-api.jup.ag/price/v3?ids=${encodeURIComponent(mints.join(','))}`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 6000);
+        const jupRes = await fetch(jupUrl, {
+          signal: controller.signal,
+          headers: { Accept: 'application/json' },
+        });
+        clearTimeout(timeout);
+
+        if (jupRes.ok) {
+          const jupData: any = await jupRes.json();
+          for (const mint of mints) {
+            const item = jupData?.[mint];
+            const p = typeof item?.usdPrice === 'number' ? item.usdPrice : Number(item?.usdPrice);
+            if (!isNaN(p) && p > 0) {
+              priceMap.set(mint, p);
+            }
+          }
+        }
+      } catch (jupErr: any) {
+        logger.warn('Jupiter batch price sampler warning:', jupErr.message);
+      }
+
+      // 2. Fallback to DexScreener for any tokens missing from Jupiter (e.g. pump.fun bonding curves)
+      const missingMints = mints.filter((m) => !priceMap.has(m));
+      if (missingMints.length > 0) {
+        const chunks: string[][] = [];
+        for (let i = 0; i < missingMints.length; i += 30) {
+          chunks.push(missingMints.slice(i, i + 30));
+        }
+
+        for (const chunk of chunks) {
+          try {
+            const dexUrl = `https://api.dexscreener.com/latest/dex/tokens/${chunk.join(',')}`;
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 5000);
+            const dexRes = await fetch(dexUrl, {
+              signal: controller.signal,
+              headers: { Accept: 'application/json' },
+            });
+            clearTimeout(timeout);
+
+            if (dexRes.ok) {
+              const dexData: any = await dexRes.json();
+              const pairs = Array.isArray(dexData?.pairs) ? dexData.pairs : [];
+              for (const pair of pairs) {
+                const mint = pair.baseToken?.address;
+                const priceUsd = Number(pair.priceUsd);
+                if (mint && !isNaN(priceUsd) && priceUsd > 0 && !priceMap.has(mint)) {
+                  priceMap.set(mint, priceUsd);
+                }
+              }
+            }
+          } catch (dexErr: any) {
+            logger.warn('DexScreener batch price sampler warning:', dexErr.message);
+          }
+        }
+      }
+
+      if (priceMap.size === 0) {
+        return { sampled: tokens.length, updated: 0 };
+      }
+
+      // 3. Append { t, p, price, takenAt } to tokens.price_history capped at 200 points
+      const now = Date.now();
+      const takenAt = new Date(now).toISOString();
+      let updatedCount = 0;
+
+      for (const t of tokens) {
+        const newPrice = priceMap.get(t.mint);
+        if (newPrice === undefined || isNaN(newPrice) || newPrice <= 0) continue;
+
+        const historyPoint = {
+          t: now,
+          p: newPrice,
+          price: newPrice,
+          takenAt,
+        };
+
+        const existingHistory = Array.isArray(t.priceHistory) ? t.priceHistory : [];
+        const updatedHistory = [...existingHistory, historyPoint].slice(-200);
+
+        try {
+          await prisma.token.update({
+            where: { id: t.id },
+            data: { priceHistory: updatedHistory },
+          });
+          updatedCount++;
+        } catch (updateErr: any) {
+          logger.warn(`Failed to update price history for ${t.mint}:`, updateErr.message);
+        }
+      }
+
+      logger.info(`Price sampler: ${updatedCount}/${tokens.length} active tokens updated (capped at 200 points)`);
+      return { sampled: tokens.length, updated: updatedCount };
+    } catch (err: any) {
+      logger.error('Error in sampleActiveTokenPrices:', err.message);
+      return { sampled: 0, updated: 0 };
+    }
   }
 }
 
