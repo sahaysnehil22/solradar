@@ -30,6 +30,7 @@ model User {
   watchlists          Watchlist[]
   portfolioAddresses  PortfolioAddress[]
   portfolioSnapshots  PortfolioSnapshot[]
+  snipeRules          SnipeRule[]
   auditLogs           AuditLog[]
 
   @@map("users")
@@ -360,3 +361,46 @@ model SystemCounter {
 
   @@map("system_counters")
 }
+
+// 21. Snipe Rules (Signals-Only Alert Filters)
+model SnipeRule {
+  id               String         @id @default(uuid())
+  userId           String         @map("user_id")
+  name             String         @default("Pump.fun Snipe Alert")
+  launchpad        String         @default("pump.fun") // "pump.fun" | "raydium" | "all"
+  minLiquidityUsd  Float          @default(5000) @map("min_liquidity_usd")
+  maxRiskScore     Int            @default(40) @map("max_risk_score")
+  maxDevHoldingPct Float          @default(10) @map("max_dev_holding_pct")
+  channel          String         @default("telegram") // "telegram" | "app" | "both"
+  status           String         @default("active") // "active" | "paused"
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  triggers         SnipeTrigger[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("snipe_rules")
+}
+
+// 22. Snipe Triggers (History of Matching Launch Signals)
+model SnipeTrigger {
+  id           String   @id @default(uuid())
+  snipeRuleId  String   @map("snipe_rule_id")
+  mint         String
+  symbol       String
+  name         String
+  price        Float
+  mcap         Float
+  liquidityUsd Float    @map("liquidity_usd")
+  riskScore    Int      @map("risk_score")
+  deliveredAt  DateTime @default(now()) @map("delivered_at")
+
+  rule SnipeRule @relation(fields: [snipeRuleId], references: [id], onDelete: Cascade)
+
+  @@index([snipeRuleId])
+  @@index([mint])
+  @@map("snipe_triggers")
+}
+

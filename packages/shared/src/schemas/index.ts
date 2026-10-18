@@ -113,3 +113,27 @@ export const ChannelMonitorDtoSchema = z.object({
   active: z.boolean().default(true),
 });
 export type ChannelMonitorDto = z.infer<typeof ChannelMonitorDtoSchema>;
+
+// Snipe Alerts Schemas (Signals-Only)
+export const SnipeRuleDtoSchema = z.object({
+  name: z.string().min(1).max(50).default('Pump.fun Snipe Alert'),
+  launchpad: z.enum(['all', 'pump.fun', 'raydium']).default('pump.fun'),
+  minLiquidityUsd: z.coerce.number().min(0).default(5000),
+  maxRiskScore: z.coerce.number().min(0).max(100).default(40),
+  maxDevHoldingPct: z.coerce.number().min(0).max(100).default(10),
+  channel: z.enum(['telegram', 'app', 'both']).default('telegram'),
+});
+export type SnipeRuleDto = z.infer<typeof SnipeRuleDtoSchema>;
+
+// Telegram Login Auth Schema
+export const TelegramAuthDtoSchema = z.object({
+  id: z.coerce.number(),
+  first_name: z.string().optional(),
+  last_name: z.string().optional(),
+  username: z.string().optional(),
+  photo_url: z.string().optional(),
+  auth_date: z.coerce.number(),
+  hash: z.string(),
+});
+export type TelegramAuthDto = z.infer<typeof TelegramAuthDtoSchema>;
+

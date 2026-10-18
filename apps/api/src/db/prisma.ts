@@ -30,6 +30,7 @@ const pendingEventIds = new Set<string>();
 
 class InMemoryDbAdapter {
   public users = new Map<string, any>();
+  public telegramAccounts = new Map<string, any>();
   public subscriptions = new Map<string, any>();
   public payments = new Map<string, any>();
   public paymentEvents = new Map<string, any>();
@@ -45,6 +46,8 @@ class InMemoryDbAdapter {
   public watchlists = new Map<string, any>();
   public portfolioAddresses = new Map<string, any>();
   public portfolioSnapshots = new Map<string, any>();
+  public snipeRules = new Map<string, any>();
+  public snipeTriggers = new Map<string, any>();
   public systemCounters = new Map<string, any>();
 
   private rowLocks = new Set<string>();
@@ -117,6 +120,32 @@ class InMemoryDbAdapter {
         return u;
       },
       count: async () => this.users.size,
+    };
+  }
+
+  get telegramAccount() {
+    return {
+      findUnique: async ({ where }: any) => {
+        if (where.telegramId) {
+          const tId = BigInt(where.telegramId);
+          for (const t of this.telegramAccounts.values()) {
+            if (t.telegramId === tId) return t;
+          }
+        }
+        return null;
+      },
+      create: async ({ data }: any) => {
+        const id = data.id || `tg_${Date.now()}`;
+        const record = {
+          id,
+          userId: data.userId,
+          telegramId: BigInt(data.telegramId),
+          username: data.username || null,
+          linkedAt: new Date(),
+        };
+        this.telegramAccounts.set(id, record);
+        return record;
+      },
     };
   }
 
@@ -562,6 +591,80 @@ class InMemoryDbAdapter {
           createdAt: new Date(),
         };
         this.portfolioAddresses.set(id, record);
+        return record;
+      },
+    };
+  }
+
+  get snipeRule() {
+    return {
+      findMany: async ({ where }: any = {}) => {
+        let list = Array.from(this.snipeRules.values());
+        if (where?.userId) list = list.filter((r) => r.userId === where.userId);
+        if (where?.status) list = list.filter((r) => r.status === where.status);
+        return list;
+      },
+      findUnique: async ({ where }: any) => {
+        return this.snipeRules.get(where.id) || null;
+      },
+      create: async ({ data }: any) => {
+        const id = data.id || `rule_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const record = {
+          id,
+          userId: data.userId,
+          name: data.name || 'Pump.fun Snipe Alert',
+          launchpad: data.launchpad || 'pump.fun',
+          minLiquidityUsd: data.minLiquidityUsd ?? 5000,
+          maxRiskScore: data.maxRiskScore ?? 40,
+          maxDevHoldingPct: data.maxDevHoldingPct ?? 10,
+          channel: data.channel || 'telegram',
+          status: data.status || 'active',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        this.snipeRules.set(id, record);
+        return record;
+      },
+      delete: async ({ where }: any) => {
+        const existing = this.snipeRules.get(where.id);
+        this.snipeRules.delete(where.id);
+        return existing || { id: where.id };
+      },
+      deleteMany: async ({ where }: any) => {
+        let count = 0;
+        for (const [id, r] of this.snipeRules.entries()) {
+          if (!where?.id || r.id === where.id) {
+            this.snipeRules.delete(id);
+            count++;
+          }
+        }
+        return { count };
+      },
+    };
+  }
+
+  get snipeTrigger() {
+    return {
+      findMany: async ({ where }: any = {}) => {
+        let list = Array.from(this.snipeTriggers.values());
+        if (where?.snipeRuleId) list = list.filter((t) => t.snipeRuleId === where.snipeRuleId);
+        return list;
+      },
+      create: async ({ data }: any) => {
+        const id = data.id || `trig_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const record = {
+          id,
+          snipeRuleId: data.snipeRuleId,
+          mint: data.mint,
+          symbol: data.symbol,
+          name: data.name,
+          price: data.price,
+          mcap: data.mcap,
+          liquidityUsd: data.liquidityUsd,
+          riskScore: data.riskScore,
+          deliveredAt: new Date(),
+        };
+        this.snipeTriggers.set(id, record);
         return record;
       },
     };

@@ -9,6 +9,8 @@ import {
   TrackWalletDtoSchema,
   PortfolioAddressDtoSchema,
   TelegramLinkDtoSchema,
+  TelegramAuthDtoSchema,
+  SnipeRuleDtoSchema,
   PlanCode,
 } from '@solradar/shared';
 import { env } from './config/env.js';
@@ -18,6 +20,7 @@ import { billingService } from './billing/billing.service.js';
 import { tokensService } from './tokens/tokens.service.js';
 import { walletsService } from './wallets/wallets.service.js';
 import { referralsService } from './referrals/referrals.service.js';
+import { snipeService } from './snipe/snipe.service.js';
 import {
   metricsRegistry,
   httpRequestsTotal,
@@ -38,9 +41,15 @@ export async function createServer(): Promise<FastifyInstance> {
     contentSecurityPolicy: false,
   });
 
-  // Prometheus Metrics Hook
+  // Global CORS & Timing Hook
   app.addHook('onRequest', async (req, reply) => {
     (req as any).startTime = process.hrtime();
+    reply.header('Access-Control-Allow-Origin', '*');
+    reply.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, stripe-signature');
+    if (req.method === 'OPTIONS') {
+      return reply.status(200).send();
+    }
   });
 
   app.addHook('onResponse', async (req, reply) => {
@@ -83,8 +92,32 @@ export async function createServer(): Promise<FastifyInstance> {
     }
   };
 
+  // Optional Auth Helper (doesn't reject if unauthenticated)
+  const optionalAuth = (req: FastifyRequest): TokenPayload | null => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+    try {
+      return authService.verifyAccessToken(authHeader.split(' ')[1]);
+    } catch {
+      return null;
+    }
+  };
+
   // 2. Auth Routes
-  app.post('/auth/signup', async (req, reply) => {
+  const handleTelegramAuth = async (req: FastifyRequest, reply: FastifyReply) => {
+    const body = TelegramAuthDtoSchema.parse(req.body);
+    try {
+      const result = await authService.loginWithTelegram(body);
+      return result;
+    } catch (err: any) {
+      return reply.status(401).send({ error: err.message });
+    }
+  };
+
+  app.post('/auth/telegram', handleTelegramAuth);
+  app.post('/api/auth/telegram', handleTelegramAuth);
+
+  const handleSignup = async (req: FastifyRequest, reply: FastifyReply) => {
     const body = SignupDtoSchema.parse(req.body);
 
     const existingUser = await prisma.user.findUnique({ where: { email: body.email } });
@@ -104,16 +137,18 @@ export async function createServer(): Promise<FastifyInstance> {
       },
     });
 
-    // If referral code provided, apply discounts
     if (body.referralCode) {
       await referralsService.applyReferralAtSignup(user.id, body.referralCode);
     }
 
     const tokens = authService.generateTokens(user as any);
     return { user: { id: user.id, email: user.email, plan: user.plan, role: user.role }, tokens };
-  });
+  };
 
-  app.post('/auth/login', async (req, reply) => {
+  app.post('/auth/signup', handleSignup);
+  app.post('/api/auth/signup', handleSignup);
+
+  const handleLogin = async (req: FastifyRequest, reply: FastifyReply) => {
     const body = LoginDtoSchema.parse(req.body);
 
     const user = await prisma.user.findUnique({ where: { email: body.email } });
@@ -128,9 +163,12 @@ export async function createServer(): Promise<FastifyInstance> {
 
     const tokens = authService.generateTokens(user as any);
     return { user: { id: user.id, email: user.email, plan: user.plan, role: user.role }, tokens };
-  });
+  };
 
-  app.post('/auth/refresh', async (req, reply) => {
+  app.post('/auth/login', handleLogin);
+  app.post('/api/auth/login', handleLogin);
+
+  const handleRefresh = async (req: FastifyRequest, reply: FastifyReply) => {
     const refreshToken = (req.body as any)?.refreshToken;
     if (!refreshToken) {
       return reply.status(400).send({ error: 'refreshToken is required' });
@@ -141,7 +179,36 @@ export async function createServer(): Promise<FastifyInstance> {
     } catch (err: any) {
       return reply.status(401).send({ error: err.message });
     }
-  });
+  };
+
+  app.post('/auth/refresh', handleRefresh);
+  app.post('/api/auth/refresh', handleRefresh);
+
+  const handleLogout = async (req: FastifyRequest) => {
+    const body = req.body as any;
+    return await authService.logout(body?.familyId);
+  };
+
+  app.post('/auth/logout', handleLogout);
+  app.post('/api/auth/logout', handleLogout);
+
+  const handleMe = async (req: FastifyRequest, reply: FastifyReply) => {
+    const session = await authenticate(req, reply);
+    const user = await prisma.user.findUnique({ where: { id: session.userId } });
+    if (!user) return reply.status(404).send({ error: 'User not found' });
+
+    return {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      plan: user.plan,
+      telegramId: user.telegramId ? String(user.telegramId) : null,
+      createdAt: user.createdAt,
+    };
+  };
+
+  app.get('/auth/me', handleMe);
+  app.get('/api/auth/me', handleMe);
 
   app.post('/auth/telegram-link', async (req, reply) => {
     const session = await authenticate(req, reply);
@@ -160,54 +227,32 @@ export async function createServer(): Promise<FastifyInstance> {
     return { success: true, telegramId: verification.user.id, username: verification.user.username };
   });
 
-  app.get('/auth/me', async (req, reply) => {
-    const session = await authenticate(req, reply);
-    const user = await prisma.user.findUnique({ where: { id: session.userId } });
-    if (!user) return reply.status(404).send({ error: 'User not found' });
-
-    return {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      plan: user.plan,
-      telegramId: user.telegramId ? String(user.telegramId) : null,
-      createdAt: user.createdAt,
-    };
-  });
-
-  // 3. Billing Routes (§2 & §2A)
+  // 3. Billing Routes
   app.post('/billing/checkout', async (req, reply) => {
     const session = await authenticate(req, reply);
     const body = CreateCheckoutDtoSchema.parse(req.body);
 
-    const checkout = await billingService.createCheckout(session.userId, body.planCode, {
+    return await billingService.createCheckout(session.userId, body.planCode, {
       successUrl: body.successUrl,
       cancelUrl: body.cancelUrl,
     });
-
-    return checkout;
   });
 
   app.post('/billing/portal', async (req, reply) => {
     const session = await authenticate(req, reply);
-    const portal = await billingService.createPortal(session.userId);
-    return portal;
+    return await billingService.createPortal(session.userId);
   });
 
   app.post('/billing/webhook', async (req, reply) => {
     const payload = req.body;
     const signature = req.headers['stripe-signature'] as string | undefined;
-
-    const result = await billingService.processWebhook(payload, signature);
-    return result;
+    return await billingService.processWebhook(payload, signature);
   });
 
   app.post('/billing/cancel', async (req, reply) => {
     const session = await authenticate(req, reply);
     const body = CancelSubscriptionDtoSchema.parse(req.body || {});
-
-    const result = await billingService.cancelSubscription(session.userId, body.immediate);
-    return result;
+    return await billingService.cancelSubscription(session.userId, body.immediate);
   });
 
   app.get('/billing/status', async (req, reply) => {
@@ -223,57 +268,139 @@ export async function createServer(): Promise<FastifyInstance> {
     };
   });
 
-  // 4. Token Screener & Pulse Feed
-  app.get('/tokens/screener', async (req) => {
+  // 4. Token Screener & Pulse Feed (GET /api/tokens, GET /api/pulse, GET /api/tokens/:mint)
+  const handleTokensQuery = async (req: FastifyRequest) => {
     const query = TokenQueryDtoSchema.parse(req.query);
-    return await tokensService.queryScreener(query);
-  });
+    const search = (req.query as any)?.search as string | undefined;
+    return await tokensService.queryScreener({ ...query, search });
+  };
 
-  app.get('/tokens/pulse', async (req) => {
-    const query = TokenQueryDtoSchema.parse({ ...(req.query as any), limit: 20 });
-    return await tokensService.queryScreener(query);
-  });
+  app.get('/tokens', handleTokensQuery);
+  app.get('/api/tokens', handleTokensQuery);
+  app.get('/tokens/screener', handleTokensQuery);
 
-  app.get('/tokens/:mint', async (req, reply) => {
+  const handlePulseQuery = async (req: FastifyRequest) => {
+    const query = TokenQueryDtoSchema.parse({ ...(req.query as any), limit: 30, sortBy: 'first_seen_at', sortDir: 'desc' });
+    const search = (req.query as any)?.search as string | undefined;
+    return await tokensService.queryScreener({ ...query, search });
+  };
+
+  app.get('/pulse', handlePulseQuery);
+  app.get('/api/pulse', handlePulseQuery);
+  app.get('/tokens/pulse', handlePulseQuery);
+
+  const handleTokenDetail = async (req: FastifyRequest, reply: FastifyReply) => {
     const mint = (req.params as any).mint;
     const detail = await tokensService.getTokenDetail(mint);
     if (!detail) {
       return reply.status(404).send({ error: 'Token not found' });
     }
     return detail;
-  });
+  };
+
+  app.get('/tokens/:mint', handleTokenDetail);
+  app.get('/api/tokens/:mint', handleTokenDetail);
 
   app.post('/tokens/webhook/helius', async (req, reply) => {
     const events = Array.isArray(req.body) ? req.body : [req.body];
-    const result = await tokensService.ingestHeliusWebhook(events);
-    return result;
+    return await tokensService.ingestHeliusWebhook(events);
   });
 
-  // 5. Tracked Wallets & Copy Signals
-  app.get('/wallets/tracked', async (req, reply) => {
+  // 5. Snipe Alerts (Signals-Only Engine)
+  const handleGetSnipeRules = async (req: FastifyRequest, reply: FastifyReply) => {
+    const session = await authenticate(req, reply);
+    return await snipeService.getRules(session.userId);
+  };
+
+  app.get('/snipe-rules', handleGetSnipeRules);
+  app.get('/api/snipe-rules', handleGetSnipeRules);
+
+  const handleCreateSnipeRule = async (req: FastifyRequest, reply: FastifyReply) => {
+    const session = await authenticate(req, reply);
+    const body = SnipeRuleDtoSchema.parse(req.body);
+    return await snipeService.createRule(session.userId, body);
+  };
+
+  app.post('/snipe-rules', handleCreateSnipeRule);
+  app.post('/api/snipe-rules', handleCreateSnipeRule);
+
+  const handleDeleteSnipeRule = async (req: FastifyRequest, reply: FastifyReply) => {
+    const session = await authenticate(req, reply);
+    const ruleId = (req.params as any).id || (req.query as any).id;
+    try {
+      return await snipeService.deleteRule(session.userId, ruleId);
+    } catch (err: any) {
+      return reply.status(400).send({ error: err.message });
+    }
+  };
+
+  app.delete('/snipe-rules/:id', handleDeleteSnipeRule);
+  app.delete('/api/snipe-rules/:id', handleDeleteSnipeRule);
+  app.delete('/snipe-rules', handleDeleteSnipeRule);
+  app.delete('/api/snipe-rules', handleDeleteSnipeRule);
+
+  const handleGetSnipeTriggers = async (req: FastifyRequest, reply: FastifyReply) => {
+    const ruleId = (req.params as any).id;
+    return await snipeService.getRuleTriggers(ruleId);
+  };
+
+  app.get('/snipe-rules/:id/triggers', handleGetSnipeTriggers);
+  app.get('/api/snipe-rules/:id/triggers', handleGetSnipeTriggers);
+
+  const handleGetAllSnipeTriggers = async (req: FastifyRequest, reply: FastifyReply) => {
+    const session = await authenticate(req, reply);
+    return await snipeService.getAllUserTriggers(session.userId);
+  };
+
+  app.get('/snipe-triggers', handleGetAllSnipeTriggers);
+  app.get('/api/snipe-triggers', handleGetAllSnipeTriggers);
+
+  // 6. Tracked Wallets & Copy Signals
+  const handleGetTrackedWallets = async (req: FastifyRequest, reply: FastifyReply) => {
     const session = await authenticate(req, reply);
     return await walletsService.getTrackedWallets(session.userId);
-  });
+  };
 
-  app.post('/wallets/track', async (req, reply) => {
+  app.get('/wallets', handleGetTrackedWallets);
+  app.get('/api/wallets', handleGetTrackedWallets);
+  app.get('/wallets/tracked', handleGetTrackedWallets);
+
+  const handleTrackWallet = async (req: FastifyRequest, reply: FastifyReply) => {
     const session = await authenticate(req, reply);
     const body = TrackWalletDtoSchema.parse(req.body);
 
     try {
-      const record = await walletsService.trackWallet(session.userId, body.address, body.label);
-      return record;
+      return await walletsService.trackWallet(session.userId, body.address, body.label);
     } catch (err: any) {
       return reply.status(400).send({ error: err.message });
     }
-  });
+  };
 
-  app.delete('/wallets/track', async (req, reply) => {
+  app.post('/wallets', handleTrackWallet);
+  app.post('/api/wallets', handleTrackWallet);
+  app.post('/wallets/track', handleTrackWallet);
+
+  const handleUntrackWallet = async (req: FastifyRequest, reply: FastifyReply) => {
     const session = await authenticate(req, reply);
-    const address = (req.query as any).address;
-    if (!address) return reply.status(400).send({ error: 'address query param required' });
+    const address = (req.query as any).address || (req.params as any).id;
+    if (!address) return reply.status(400).send({ error: 'address is required' });
 
     const success = await walletsService.untrackWallet(session.userId, address);
     return { success };
+  };
+
+  app.delete('/wallets/:id', handleUntrackWallet);
+  app.delete('/api/wallets/:id', handleUntrackWallet);
+  app.delete('/wallets/track', handleUntrackWallet);
+
+  app.get('/api/wallets/:id/signals', async (req, reply) => {
+    const walletId = (req.params as any).id;
+    const trades = await prisma.walletTrade.findMany({
+      where: { trackedWalletId: walletId },
+      orderBy: { detectedAt: 'desc' } as any,
+      take: 20,
+    });
+    return trades;
   });
 
   app.post('/wallets/trade-webhook', async (req) => {
@@ -281,34 +408,66 @@ export async function createServer(): Promise<FastifyInstance> {
     return await walletsService.recordWalletTrade(body);
   });
 
-  // 6. Portfolio (Read-Only)
-  app.get('/portfolio', async (req, reply) => {
+  // 7. Portfolio (Read-Only)
+  const handleGetPortfolio = async (req: FastifyRequest, reply: FastifyReply) => {
     const session = await authenticate(req, reply);
     return await walletsService.getPortfolioSummary(session.userId);
-  });
+  };
 
-  app.post('/portfolio/address', async (req, reply) => {
+  app.get('/portfolio', handleGetPortfolio);
+  app.get('/api/portfolio', handleGetPortfolio);
+
+  const handleAddPortfolioAddress = async (req: FastifyRequest, reply: FastifyReply) => {
     const session = await authenticate(req, reply);
     const body = PortfolioAddressDtoSchema.parse(req.body);
+    return await walletsService.addPortfolioAddress(session.userId, body.address, body.label);
+  };
 
-    const record = await walletsService.addPortfolioAddress(session.userId, body.address, body.label);
-    return record;
-  });
+  app.post('/portfolio/address', handleAddPortfolioAddress);
+  app.post('/api/portfolio/address', handleAddPortfolioAddress);
 
-  // 7. Referrals
-  app.get('/referrals', async (req, reply) => {
+  // 8. Referrals (Working)
+  const handleGetReferrals = async (req: FastifyRequest, reply: FastifyReply) => {
     const session = await authenticate(req, reply);
     const code = await referralsService.getOrCreateReferralCode(session.userId);
     const stats = await referralsService.getUserReferralStats(session.userId);
 
+    const baseUrl = env.WEB_BASE_URL || 'https://solradar.io';
     return {
       referralCode: code,
-      referralLink: `${env.WEB_BASE_URL || 'https://solradar.io'}/signup?ref=${code}`,
+      referralLink: `${baseUrl}/app/referrals?ref=${code}`,
       ...stats,
+    };
+  };
+
+  app.get('/referrals', handleGetReferrals);
+  app.get('/api/referrals', handleGetReferrals);
+
+  app.get('/api/referrals/link', async (req, reply) => {
+    const session = await authenticate(req, reply);
+    const code = await referralsService.getOrCreateReferralCode(session.userId);
+    const baseUrl = env.WEB_BASE_URL || 'https://solradar.io';
+    return {
+      referralCode: code,
+      referralLink: `${baseUrl}/app/referrals?ref=${code}`,
     };
   });
 
-  // 8. Admin & Counters
+  app.get('/api/referrals/ledger', async (req, reply) => {
+    const session = await authenticate(req, reply);
+    const stats = await referralsService.getUserReferralStats(session.userId);
+    return stats;
+  });
+
+  app.get('/api/referrals/history', async (req, reply) => {
+    const session = await authenticate(req, reply);
+    const referrals = await prisma.referral.findMany({
+      where: { referrerUserId: session.userId },
+    });
+    return referrals;
+  });
+
+  // 9. Admin & Counters
   app.get('/admin/stats', async (req, reply) => {
     const session = await authenticate(req, reply);
     if (session.role !== 'admin') {

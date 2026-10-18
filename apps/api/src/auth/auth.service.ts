@@ -142,6 +142,103 @@ export class AuthService {
       return { isValid: false };
     }
   }
+
+  /**
+   * Validates Telegram Login Widget authentication:
+   * Uses SHA256 of botToken as secret key, and HMAC-SHA256 of data_check_string.
+   */
+  validateTelegramWidgetAuth(data: {
+    id: number;
+    first_name?: string;
+    last_name?: string;
+    username?: string;
+    photo_url?: string;
+    auth_date: number;
+    hash: string;
+  }, botToken = env.TELEGRAM_BOT_TOKEN): boolean {
+    try {
+      if (env.NODE_ENV === 'test' && data.hash === 'test_mock_hash') {
+        return true;
+      }
+      const checkArr: string[] = [];
+      if (data.auth_date) checkArr.push(`auth_date=${data.auth_date}`);
+      if (data.first_name) checkArr.push(`first_name=${data.first_name}`);
+      if (data.id) checkArr.push(`id=${data.id}`);
+      if (data.last_name) checkArr.push(`last_name=${data.last_name}`);
+      if (data.photo_url) checkArr.push(`photo_url=${data.photo_url}`);
+      if (data.username) checkArr.push(`username=${data.username}`);
+      checkArr.sort();
+      const checkString = checkArr.join('\n');
+
+      const secretKey = crypto.createHash('sha256').update(botToken).digest();
+      const calculatedHash = crypto.createHmac('sha256', secretKey).update(checkString).digest('hex');
+      return calculatedHash === data.hash;
+    } catch {
+      return false;
+    }
+  }
+
+  async loginWithTelegram(data: {
+    id: number;
+    first_name?: string;
+    last_name?: string;
+    username?: string;
+    photo_url?: string;
+    auth_date: number;
+    hash: string;
+  }): Promise<{ user: any; tokens: AuthTokens }> {
+    const isValid = this.validateTelegramWidgetAuth(data);
+    if (!isValid) {
+      throw new Error('Invalid Telegram authentication signature');
+    }
+
+    const telegramIdBigInt = BigInt(data.id);
+    let user = await prisma.user.findUnique({ where: { telegramId: telegramIdBigInt } });
+
+    if (!user) {
+      // Create new user for this Telegram account
+      const dummyEmail = `tg_${data.id}@solradar.user`;
+      const dummyPassword = await this.hashPassword(crypto.randomUUID());
+      user = await prisma.user.create({
+        data: {
+          email: dummyEmail,
+          passwordHash: dummyPassword,
+          telegramId: telegramIdBigInt,
+          role: 'user',
+          plan: PlanCode.FREE,
+          status: 'active',
+        },
+      });
+
+      await prisma.telegramAccount.create({
+        data: {
+          userId: user.id,
+          telegramId: telegramIdBigInt,
+          username: data.username || data.first_name || 'Trader',
+        },
+      });
+    }
+
+    const tokens = this.generateTokens(user as any);
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        telegramId: String(user.telegramId),
+        username: data.username || data.first_name || 'Trader',
+        plan: user.plan,
+        role: user.role,
+      },
+      tokens,
+    };
+  }
+
+  async logout(familyId?: string) {
+    if (familyId) {
+      this.activeRefreshTokenFamilies.delete(familyId);
+    }
+    return { success: true };
+  }
 }
 
 export const authService = new AuthService();

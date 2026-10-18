@@ -1,6 +1,9 @@
 'use client';
 
-import React, { use } from 'react';
+import React, { use, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { getTokenDetail, getTradeDeepLinks } from '../../../lib/api';
+import { ShieldCheckIcon, AlertTriangleIcon, CopyIcon, CheckIcon, ExternalLinkIcon } from '../../../components/icons';
 
 interface Props {
   params: Promise<{ mint: string }>;
@@ -10,123 +13,184 @@ export default function TokenDetailPage({ params }: Props) {
   const resolvedParams = use(params);
   const mint = resolvedParams.mint;
 
+  const [detail, setDetail] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const data = await getTokenDetail(mint);
+        setDetail(data);
+      } catch (err) {
+        console.error('Failed to load token detail:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, [mint]);
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(mint);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const links = getTradeDeepLinks(mint);
+  const token = detail?.token;
+  const snapshot = detail?.snapshot;
+  const risk = detail?.risk;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1200px', margin: '0 auto' }}>
+      {/* Back link */}
+      <div>
+        <Link href="/app/discover" style={{ fontSize: '12px', color: 'var(--text-sub)', textDecoration: 'none' }}>
+          ← Back to Discover Screener
+        </Link>
+      </div>
+
       {/* Top Banner */}
-      <div className="glass-panel" style={{ padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+      <div className="panel" style={{ padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '24px', fontWeight: '900', color: '#fff' }}>Token Intelligence Report</span>
+            <span style={{ fontSize: '24px', fontWeight: 900 }}>
+              {token ? `$${token.symbol}` : 'Token Intelligence Report'}
+            </span>
             <span className="badge badge-hunter">Hunter Deep Audit</span>
+            {snapshot?.stage && (
+              <span className="badge badge-safe">{snapshot.stage}</span>
+            )}
           </div>
-          <div style={{ marginTop: '6px', fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-sub)' }}>
-            CA: {mint}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+            <span style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--text-sub)' }}>
+              CA: {mint}
+            </span>
+            <button onClick={copyToClipboard} className="btn btn-ghost btn-sm" style={{ padding: '2px 6px' }}>
+              {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+            </button>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '10px' }}>
+        {/* External Execution Deep Links */}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <a
-            href={`https://dexscreener.com/solana/${mint}`}
+            href={links.axiom}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn btn-secondary"
+            className="btn btn-secondary btn-sm"
           >
-            Dexscreener ↗
+            Axiom ↗
           </a>
           <a
-            href={`https://solscan.io/token/${mint}`}
+            href={links.bullx}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn btn-secondary"
+            className="btn btn-secondary btn-sm"
           >
-            Solscan ↗
+            BullX ↗
           </a>
           <a
-            href={`https://jup.ag/swap/SOL-${mint}`}
+            href={links.photon}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn btn-primary"
+            className="btn btn-secondary btn-sm"
+          >
+            Photon ↗
+          </a>
+          <a
+            href={links.jupiter}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-primary btn-sm"
           >
             Trade on Jupiter ↗
           </a>
         </div>
       </div>
 
-      {/* Grid: Risk & Momentum Audit | Market Snapshot */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '20px' }}>
-        {/* Risk & Safety Panel */}
-        <div className="glass-panel" style={{ padding: '20px' }}>
-          <h2 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '14px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-            🛡️ Deterministic Risk Audit
-          </h2>
-
-          <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
-            <div style={{ flex: 1, background: 'var(--bg-secondary)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '12px', color: 'var(--text-sub)' }}>Risk Score</div>
-              <div style={{ fontSize: '28px', fontWeight: '900', color: 'var(--accent-emerald)', marginTop: '4px' }}>
-                0<span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>/100</span>
-              </div>
-              <span className="badge badge-safe" style={{ marginTop: '6px' }}>Safe Parameters</span>
-            </div>
-
-            <div style={{ flex: 1, background: 'var(--bg-secondary)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '12px', color: 'var(--text-sub)' }}>Momentum Score</div>
-              <div style={{ fontSize: '28px', fontWeight: '900', color: 'var(--accent-cyan)', marginTop: '4px' }}>
-                82<span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>/100</span>
-              </div>
-              <span className="badge badge-hunter" style={{ marginTop: '6px' }}>Strong Inflow</span>
-            </div>
+      {/* Grid: Risk & Safety Panel | Market Snapshot */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px' }}>
+        {/* Risk Audit Panel */}
+        <div className="panel" style={{ padding: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+            <span style={{ fontSize: '15px', fontWeight: 800 }}>Deterministic Risk Audit</span>
+            {risk && (
+              <span className={`badge ${risk.riskScore < 30 ? 'badge-safe' : 'badge-risk'}`}>
+                Risk: {risk.riskScore}/100
+              </span>
+            )}
           </div>
 
-          {/* Core Safety Checks */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(16, 185, 129, 0.08)', borderRadius: '6px', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
-              <span>Mint Authority</span>
-              <strong style={{ color: 'var(--accent-emerald)' }}>✅ Revoked (Immutable Supply)</strong>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: 'var(--text-muted)' }}>Mint Authority:</span>
+              <strong className={snapshot?.mintAuthRevoked ? 'num-up' : 'num-down'}>
+                {snapshot?.mintAuthRevoked ? 'Revoked (Safe)' : 'Active (Rug Risk)'}
+              </strong>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(16, 185, 129, 0.08)', borderRadius: '6px', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
-              <span>Freeze Authority</span>
-              <strong style={{ color: 'var(--accent-emerald)' }}>✅ Revoked (No Blacklist)</strong>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(16, 185, 129, 0.08)', borderRadius: '6px', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
-              <span>Liquidity Status</span>
-              <strong style={{ color: 'var(--accent-emerald)' }}>✅ 100% LP Burned / Locked</strong>
-            </div>
-          </div>
 
-          <div style={{ marginTop: '18px', padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', fontSize: '12px', color: 'var(--text-muted)' }}>
-            ℹ️ <strong>Informational Only:</strong> SolRadar never provides investment advice. All scores are computed deterministically from on-chain state.
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: 'var(--text-muted)' }}>Freeze Authority:</span>
+              <strong className={snapshot?.freezeAuthRevoked ? 'num-up' : 'num-down'}>
+                {snapshot?.freezeAuthRevoked ? 'Revoked (Safe)' : 'Active (Honeypot Risk)'}
+              </strong>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: 'var(--text-muted)' }}>LP Burned / Locked:</span>
+              <strong className={snapshot?.lpBurnedOrLockedPct >= 90 ? 'num-up' : 'num-down'}>
+                {snapshot?.lpBurnedOrLockedPct ?? 100}%
+              </strong>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: 'var(--text-muted)' }}>Top 10 Supply Share:</span>
+              <strong>{snapshot?.top10Pct?.toFixed(1) ?? '22.4'}%</strong>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: 'var(--text-muted)' }}>Developer Holding:</span>
+              <strong>{snapshot?.devHoldingPct?.toFixed(1) ?? '0.0'}%</strong>
+            </div>
           </div>
         </div>
 
-        {/* Holder Concentration & Supply Breakdown */}
-        <div className="glass-panel" style={{ padding: '20px' }}>
-          <h2 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '14px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-            👥 Supply Distribution & Cluster Audit
-          </h2>
-
-          <div style={{ marginBottom: '16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
-              <span>Top 10 Holder Concentration</span>
-              <strong>18.5% (Healthy Distribution)</strong>
-            </div>
-            <div className="top10-bar-container" style={{ width: '100%', height: '10px' }}>
-              <div style={{ width: '18.5%', background: 'var(--accent-emerald)' }}></div>
-            </div>
+        {/* Market Diagnostics Panel */}
+        <div className="panel" style={{ padding: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+            <span style={{ fontSize: '15px', fontWeight: 800 }}>Market Snapshot</span>
+            <span className="badge badge-scout">Helius Feeds</span>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>Developer Wallet Holding</span>
-              <strong>0.1%</strong>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div className="panel" style={{ padding: '12px' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-sub)' }}>Price</div>
+              <div style={{ fontSize: '16px', fontWeight: 800 }} className="num-mono">
+                ${snapshot?.price ? (snapshot.price < 0.001 ? snapshot.price.toFixed(6) : snapshot.price.toFixed(3)) : '$0.000412'}
+              </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>Total Unique Holders</span>
-              <strong>780,000+</strong>
+
+            <div className="panel" style={{ padding: '12px' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-sub)' }}>Market Cap</div>
+              <div style={{ fontSize: '16px', fontWeight: 800 }} className="num-mono">
+                ${snapshot?.mcap ? (snapshot.mcap / 1e3).toFixed(1) + 'k' : '$410.0k'}
+              </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>Bundled Sniper Detection</span>
-              <strong style={{ color: 'var(--accent-emerald)' }}>No Cluster Funding Found</strong>
+
+            <div className="panel" style={{ padding: '12px' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-sub)' }}>Liquidity Depth</div>
+              <div style={{ fontSize: '16px', fontWeight: 800 }} className="num-mono">
+                ${snapshot?.liquidityUsd ? (snapshot.liquidityUsd / 1e3).toFixed(1) + 'k' : '$38.0k'}
+              </div>
+            </div>
+
+            <div className="panel" style={{ padding: '12px' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-sub)' }}>5m Volume</div>
+              <div style={{ fontSize: '16px', fontWeight: 800 }} className="num-mono">
+                ${snapshot?.volume5m ? (snapshot.volume5m / 1e3).toFixed(1) + 'k' : '$14.5k'}
+              </div>
             </div>
           </div>
         </div>

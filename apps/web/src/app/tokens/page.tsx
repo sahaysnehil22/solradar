@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
 
-export default function TokensPage() {
-  redirect('/');
+export default function LegacyTokensRedirect() {
+  redirect('/app/discover');
 }

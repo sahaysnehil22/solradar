@@ -5,12 +5,14 @@ import {
   TokenSnapshotDto,
 } from '@solradar/shared';
 import { prisma } from '../db/prisma.js';
+import { snipeService } from '../snipe/snipe.service.js';
 import { logger } from '../observability/index.js';
 
 export interface TokenWithLatestSnapshot {
   token: any;
   snapshot: any;
   risk: RiskReportOutput;
+  sparkline?: number[];
 }
 
 export class TokensService {
@@ -19,7 +21,7 @@ export class TokensService {
   }
 
   private async seedInitialVerifiedTokens() {
-    const sampleMints = [
+    const flagshipTokens = [
       {
         mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
         symbol: 'BONK',
@@ -40,6 +42,7 @@ export class TokensService {
         freezeRevoked: true,
         lpBurned: 100,
         stage: 'migrated' as const,
+        ageMinutes: 7200,
       },
       {
         mint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
@@ -61,6 +64,7 @@ export class TokensService {
         freezeRevoked: true,
         lpBurned: 100,
         stage: 'migrated' as const,
+        ageMinutes: 4800,
       },
       {
         mint: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',
@@ -82,6 +86,51 @@ export class TokensService {
         freezeRevoked: true,
         lpBurned: 100,
         stage: 'migrated' as const,
+        ageMinutes: 3600,
+      },
+      {
+        mint: 'MEW1gQWJ3nEXg2qgEriKu7FAFj79PHvQVREQUzScPP5',
+        symbol: 'MEW',
+        name: 'cat in a dogs world',
+        decimals: 5,
+        price: 0.0094,
+        mcap: 830000000,
+        liquidityUsd: 11000000,
+        vol5m: 82000,
+        vol1h: 940000,
+        vol24h: 16500000,
+        buys: 290,
+        sells: 210,
+        holders: 140000,
+        top10: 24.2,
+        devHolding: 0.0,
+        mintRevoked: true,
+        freezeRevoked: true,
+        lpBurned: 100,
+        stage: 'migrated' as const,
+        ageMinutes: 2400,
+      },
+      {
+        mint: '2qEHjDLDLbuBgRYvsxhc5RefjKu8tBQhwwUZZUjs泵',
+        symbol: 'PNUT',
+        name: 'Peanut the Squirrel',
+        decimals: 6,
+        price: 1.15,
+        mcap: 1150000000,
+        liquidityUsd: 16000000,
+        vol5m: 140000,
+        vol1h: 1500000,
+        vol24h: 31000000,
+        buys: 510,
+        sells: 430,
+        holders: 112000,
+        top10: 28.0,
+        devHolding: 0.2,
+        mintRevoked: true,
+        freezeRevoked: true,
+        lpBurned: 100,
+        stage: 'migrated' as const,
+        ageMinutes: 1200,
       },
       {
         mint: 'CurveLaunchPulseTest1111111111111111111111111',
@@ -103,6 +152,7 @@ export class TokensService {
         freezeRevoked: true,
         lpBurned: 75,
         stage: 'curve' as const,
+        ageMinutes: 45,
       },
       {
         mint: 'DangerousRugRiskTest2222222222222222222222222',
@@ -124,11 +174,68 @@ export class TokensService {
         freezeRevoked: false,
         lpBurned: 0,
         stage: 'new' as const,
+        ageMinutes: 5,
       },
     ];
 
+    // Generate 55 additional diverse realistic memecoins (total 62 tokens)
+    const prefixes = ['NEO', 'BABY', 'DARK', 'TURBO', 'CYBER', 'QUANT', 'MEGA', 'PEPE', 'CHILL', 'CHOMP', 'MOON', 'AI', 'SOL', 'APE'];
+    const suffixes = ['DOGE', 'CAT', 'FROG', 'BULL', 'SHIB', 'PUMP', 'ALPHA', 'RADAR', 'WHALE', 'CHAD', 'GEM', 'ROCKET', 'BOT'];
+    const stages: ('new' | 'curve' | 'migrated')[] = ['new', 'curve', 'migrated'];
+
+    const generatedTokens: any[] = [];
+    for (let i = 1; i <= 55; i++) {
+      const p = prefixes[i % prefixes.length];
+      const s = suffixes[(i * 3) % suffixes.length];
+      const symbol = `${p}${s}`.substring(0, 8);
+      const name = `${p} ${s} Coin`;
+      const stage = stages[i % 3];
+      const mint = `SolMemeTokenMint${i.toString().padStart(3, '0')}Xyz1234567890abcdef`;
+
+      let price = 0.00001 * (i * 1.5);
+      let mcap = stage === 'migrated' ? 2500000 + i * 450000 : stage === 'curve' ? 85000 + i * 12000 : 9000 + i * 1500;
+      let liquidity = stage === 'migrated' ? mcap * 0.12 : stage === 'curve' ? mcap * 0.2 : mcap * 0.25;
+      let vol5m = Math.round(liquidity * 0.08);
+      let vol1h = Math.round(vol5m * 6.5);
+      let vol24h = Math.round(vol1h * 8);
+      let buys = 15 + (i * 7);
+      let sells = 8 + (i * 4);
+      let holders = stage === 'migrated' ? 1200 + i * 150 : stage === 'curve' ? 140 + i * 18 : 25 + i * 3;
+      let top10 = 15 + ((i * 4) % 45);
+      let devHolding = ((i * 3) % 12) * 0.5;
+      let mintRevoked = i % 4 !== 0;
+      let freezeRevoked = i % 5 !== 0;
+      let lpBurned = stage === 'migrated' ? 100 : stage === 'curve' ? 65 : 0;
+      let ageMinutes = stage === 'new' ? (i % 20) + 1 : stage === 'curve' ? 30 + (i * 4) : 200 + (i * 35);
+
+      generatedTokens.push({
+        mint,
+        symbol,
+        name,
+        decimals: 6,
+        price,
+        mcap,
+        liquidityUsd: liquidity,
+        vol5m,
+        vol1h,
+        vol24h,
+        buys,
+        sells,
+        holders,
+        top10,
+        devHolding,
+        mintRevoked,
+        freezeRevoked,
+        lpBurned,
+        stage,
+        ageMinutes,
+      });
+    }
+
+    const allSeeds = [...flagshipTokens, ...generatedTokens];
+
     try {
-      for (const s of sampleMints) {
+      for (const s of allSeeds) {
         const existing = await prisma.token.findUnique({ where: { mint: s.mint } });
         if (!existing) {
           const token = await prisma.token.create({
@@ -138,7 +245,7 @@ export class TokensService {
               name: s.name,
               decimals: s.decimals,
               creator: 'CreatorWalletAddressPlaceholder111111111111',
-              firstSeenAt: new Date(Date.now() - 3600000),
+              firstSeenAt: new Date(Date.now() - s.ageMinutes * 60000),
             },
           });
 
@@ -165,6 +272,7 @@ export class TokensService {
           });
         }
       }
+      logger.info('Initialized verified token pool:', { totalSeeded: allSeeds.length });
     } catch (e: any) {
       logger.warn('Initial token seed handled:', e.message);
     }
@@ -221,6 +329,33 @@ export class TokensService {
         },
       });
 
+      const risk = evaluateTokenRisk({
+        mintAuthorityRevoked: snapshot.mintAuthRevoked,
+        freezeAuthorityRevoked: snapshot.freezeAuthRevoked,
+        lpBurnedOrLockedPct: snapshot.lpBurnedOrLockedPct,
+        top10Pct: snapshot.top10Pct,
+        devHoldingPct: snapshot.devHoldingPct,
+        liquidityUsd: snapshot.liquidityUsd,
+        mcapUsd: snapshot.mcap,
+        volume5m: snapshot.volume5m,
+        buys5m: snapshot.buys,
+        sells5m: snapshot.sells,
+        holderCount: snapshot.holderCount,
+      });
+
+      // Check snipe alert rules
+      await snipeService.evaluateLaunchAgainstRules({
+        mint,
+        symbol: token.symbol,
+        name: token.name,
+        price: snapshot.price,
+        mcap: snapshot.mcap,
+        liquidityUsd: snapshot.liquidityUsd,
+        riskScore: risk.riskScore,
+        devHoldingPct: snapshot.devHoldingPct,
+        launchpad: evt.launchpad || 'pump.fun',
+      });
+
       // Check alert trigger condition: New Launch with deterministic eventKey
       const eventKey = `launch:${mint}`;
       const existingAlert = await prisma.alert.findUnique({ where: { eventKey } });
@@ -248,11 +383,20 @@ export class TokensService {
     return { processedCount: events.length, alertsGenerated: processedAlerts.length };
   }
 
-  async queryScreener(query: TokenQueryDto): Promise<{ data: TokenWithLatestSnapshot[]; total: number }> {
+  async queryScreener(query: TokenQueryDto & { search?: string }): Promise<{ data: TokenWithLatestSnapshot[]; total: number }> {
     const tokens = await prisma.token.findMany();
     const list: TokenWithLatestSnapshot[] = [];
 
+    const searchQuery = query.search?.toLowerCase().trim();
+
     for (const token of tokens) {
+      if (searchQuery) {
+        const matchSymbol = token.symbol.toLowerCase().includes(searchQuery);
+        const matchName = token.name.toLowerCase().includes(searchQuery);
+        const matchMint = token.mint.toLowerCase().includes(searchQuery);
+        if (!matchSymbol && !matchName && !matchMint) continue;
+      }
+
       const snapshots = await prisma.tokenSnapshot.findMany({ where: { tokenId: token.id } });
       if (snapshots.length === 0) continue;
       const latestSnapshot = snapshots.sort((a: any, b: any) => new Date(b.takenAt).getTime() - new Date(a.takenAt).getTime())[0];
@@ -291,7 +435,20 @@ export class TokensService {
 
       if (query.maxRiskScore && risk.riskScore > query.maxRiskScore) continue;
 
-      list.push({ token, snapshot: latestSnapshot, risk });
+      // Synthetic deterministic sparkline based on price & volume
+      const base = latestSnapshot.price;
+      const sparkline = [
+        base * 0.92,
+        base * 0.95,
+        base * 0.93,
+        base * 0.98,
+        base * 0.96,
+        base * 1.02,
+        base * (latestSnapshot.volume5m > latestSnapshot.volume1h * 0.2 ? 1.05 : 0.99),
+        base,
+      ];
+
+      list.push({ token, snapshot: latestSnapshot, risk, sparkline });
     }
 
     // Sort list
@@ -358,7 +515,18 @@ export class TokensService {
       holderCount: latestSnapshot.holderCount,
     });
 
-    return { token, snapshot: latestSnapshot, risk };
+    const base = latestSnapshot.price;
+    const sparkline = [
+      base * 0.91,
+      base * 0.94,
+      base * 0.92,
+      base * 0.97,
+      base * 0.95,
+      base * 1.03,
+      base,
+    ];
+
+    return { token, snapshot: latestSnapshot, risk, sparkline };
   }
 }
 
