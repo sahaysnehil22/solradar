@@ -13,9 +13,17 @@ export default function MarketingLandingPage() {
   const [previewTokens, setPreviewTokens] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [loginRequired, setLoginRequired] = useState(false);
 
   useEffect(() => {
     setIsLoggedIn(!!getStoredToken());
+
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('login') === 'required') {
+        setLoginRequired(true);
+      }
+    }
 
     async function loadPreview() {
       try {
@@ -32,6 +40,26 @@ export default function MarketingLandingPage() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* Login Required Notice Banner */}
+      {loginRequired && !isLoggedIn && (
+        <div style={{
+          background: 'rgba(139, 92, 246, 0.15)',
+          borderBottom: '1px solid var(--accent)',
+          padding: '10px 20px',
+          textAlign: 'center',
+          color: '#c4b5fd',
+          fontSize: '13px',
+          fontWeight: 600,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '8px',
+        }}>
+          <span>🔒</span>
+          <span>Authentication Required — Sign in via Telegram below to enter the terminal.</span>
+        </div>
+      )}
+
       {/* Public Top Navigation */}
       <header style={{
         height: '56px',
