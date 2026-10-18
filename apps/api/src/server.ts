@@ -472,11 +472,24 @@ export async function createServer(): Promise<FastifyInstance> {
   app.get('/wallets/tracked', handleGetTrackedWallets);
 
   const handleTrackWallet = async (req: FastifyRequest, reply: FastifyReply) => {
-    const session = await authenticate(req, reply);
-    const body = TrackWalletDtoSchema.parse(req.body);
+    let session;
+    try {
+      session = await authenticate(req, reply);
+    } catch (err: any) {
+      return reply.status(401).send({ error: err.message || 'Unauthorized: Please log in to track wallets.' });
+    }
+
+    let body;
+    try {
+      body = TrackWalletDtoSchema.parse(req.body);
+    } catch (err: any) {
+      const issueMsg = (err as any).issues ? (err as any).issues.map((i: any) => i.message).join(', ') : err.message;
+      return reply.status(400).send({ error: issueMsg || 'Invalid Solana wallet address format.' });
+    }
 
     try {
-      return await walletsService.trackWallet(session.userId, body.address, body.label);
+      const result = await walletsService.trackWallet(session.userId, body.address, body.label);
+      return result;
     } catch (err: any) {
       return reply.status(400).send({ error: err.message });
     }
@@ -487,17 +500,29 @@ export async function createServer(): Promise<FastifyInstance> {
   app.post('/wallets/track', handleTrackWallet);
 
   const handleUntrackWallet = async (req: FastifyRequest, reply: FastifyReply) => {
-    const session = await authenticate(req, reply);
-    const address = (req.query as any).address || (req.params as any).id;
-    if (!address) return reply.status(400).send({ error: 'address is required' });
+    let session;
+    try {
+      session = await authenticate(req, reply);
+    } catch (err: any) {
+      return reply.status(401).send({ error: err.message || 'Unauthorized' });
+    }
 
-    const success = await walletsService.untrackWallet(session.userId, address);
-    return { success };
+    const address = (req.params as any).id || (req.query as any).address || (req.query as any).id || (req.body as any)?.address;
+    if (!address) return reply.status(400).send({ error: 'Wallet address is required to untrack' });
+
+    try {
+      const success = await walletsService.untrackWallet(session.userId, address);
+      return { success };
+    } catch (err: any) {
+      return reply.status(400).send({ error: err.message });
+    }
   };
 
   app.delete('/wallets/:id', handleUntrackWallet);
   app.delete('/api/wallets/:id', handleUntrackWallet);
   app.delete('/wallets/track', handleUntrackWallet);
+  app.delete('/wallets', handleUntrackWallet);
+  app.delete('/api/wallets', handleUntrackWallet);
 
   app.get('/api/wallets/:id/signals', async (req, reply) => {
     const walletId = (req.params as any).id;

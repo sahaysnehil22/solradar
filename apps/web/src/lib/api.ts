@@ -262,12 +262,13 @@ export async function getAdminStats() {
  * Never touches private keys, never signs transactions.
  */
 export function getTradeDeepLinks(mint: string) {
+  const cleanMint = (mint || '').trim();
   return {
-    axiom: `https://axiom.trade/trade/${mint}`,
-    bullx: `https://bullx.io/terminal?chainId=1399811149&address=${mint}`,
-    photon: `https://photon-sol.tinyastro.io/en/lp/${mint}`,
-    jupiter: `https://jup.ag/swap/SOL-${mint}`,
-    dexscreener: `https://dexscreener.com/solana/${mint}`,
-    solscan: `https://solscan.io/token/${mint}`,
+    axiom: cleanMint ? `https://axiom.trade/trade/${cleanMint}` : 'https://axiom.trade',
+    bullx: cleanMint ? `https://bullx.io/terminal?chainId=1399811149&address=${cleanMint}` : 'https://bullx.io',
+    photon: cleanMint ? `https://photon-sol.tinyastro.io/en/lp/${cleanMint}` : 'https://photon-sol.tinyastro.io',
+    jupiter: cleanMint ? `https://jup.ag/swap/SOL-${cleanMint}` : 'https://jup.ag',
+    dexscreener: cleanMint ? `https://dexscreener.com/solana/${cleanMint}` : 'https://dexscreener.com',
+    solscan: cleanMint ? `https://solscan.io/token/${cleanMint}` : 'https://solscan.io',
   };
 }

@@ -26,7 +26,7 @@ export const PLAN_CONFIGS: Record<PlanCode, PlanConfig> = {
     code: PlanCode.FREE,
     name: 'Free Demo',
     priceCentsMonthly: 0,
-    maxTrackedWallets: 0,
+    maxTrackedWallets: 1, // Allow 1 wallet for evaluation as indicated in web UI (0/1 used)
     maxWatchlistTokens: 3,
     instantPriorityAlerts: false,
     copyTradeSignals: false,
@@ -39,7 +39,7 @@ export const PLAN_CONFIGS: Record<PlanCode, PlanConfig> = {
     code: PlanCode.SCOUT,
     name: 'Scout',
     priceCentsMonthly: 5000, // $50/mo
-    maxTrackedWallets: 1,
+    maxTrackedWallets: 3,
     maxWatchlistTokens: 25,
     instantPriorityAlerts: false,
     copyTradeSignals: false,

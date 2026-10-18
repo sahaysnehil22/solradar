@@ -12,15 +12,24 @@ export default function SmartWalletsPage() {
   const [labelInput, setLabelInput] = useState('Smart Trader');
   const [submitting, setSubmitting] = useState(false);
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [pendingUntrack, setPendingUntrack] = useState<string | null>(null);
 
   const user = getStoredUser();
-  const maxWallets = user?.plan === 'hunter' ? 10 : 1;
+  const maxWallets = user?.plan === 'hunter' ? 10 : user?.plan === 'scout' ? 3 : 1;
+
+  const showToast = (type: 'success' | 'error', message: string) => {
+    setToast({ type, message });
+    setTimeout(() => {
+      setToast((cur) => (cur?.message === message ? null : cur));
+    }, 4500);
+  };
 
   const loadWallets = async () => {
     try {
       const data = await getTrackedWallets();
       setWallets(data || []);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load tracked wallets:', err);
     } finally {
       setLoading(false);
@@ -33,28 +42,63 @@ export default function SmartWalletsPage() {
 
   const handleAddWallet = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (wallets.length >= maxWallets) {
-      alert(`Your ${user?.plan || 'scout'} plan is limited to ${maxWallets} tracked wallet(s). Upgrade to Hunter for up to 10 wallets.`);
+    const cleanAddress = addressInput.trim();
+    const cleanLabel = labelInput.trim() || 'Smart Trader';
+
+    if (!cleanAddress) {
+      showToast('error', 'Please enter a valid Solana public wallet address.');
       return;
     }
+
+    if (cleanAddress.length < 32 || cleanAddress.length > 44) {
+      showToast('error', `Invalid address length (${cleanAddress.length} chars). Solana Base58 addresses must be 32 to 44 characters.`);
+      return;
+    }
+
+    if (wallets.length >= maxWallets) {
+      showToast(
+        'error',
+        `Your ${user?.plan || 'Free'} plan limit is ${maxWallets} tracked wallet(s). Upgrade to Hunter for up to 10 wallets.`
+      );
+      return;
+    }
+
     setSubmitting(true);
     try {
-      await trackWallet(addressInput.trim(), labelInput.trim() || 'Smart Trader');
+      const newWallet = await trackWallet(cleanAddress, cleanLabel);
       setAddressInput('');
+      setLabelInput('Smart Trader');
+
+      // Optimistically insert and refresh
+      setWallets((prev) => {
+        const exists = prev.some((w) => w.address === cleanAddress);
+        if (exists) return prev;
+        return [newWallet || { id: `w_${Date.now()}`, address: cleanAddress, label: cleanLabel }, ...prev];
+      });
+
+      showToast('success', `Wallet ${cleanAddress.substring(0, 6)}...${cleanAddress.slice(-4)} added successfully!`);
       await loadWallets();
     } catch (err: any) {
-      alert(err.message || 'Failed to track wallet');
+      showToast('error', err.message || 'Failed to track wallet on-chain. Please check the address or your plan limit.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleUntrack = async (address: string) => {
+  const confirmUntrack = async () => {
+    if (!pendingUntrack) return;
+    const addr = pendingUntrack;
+    setPendingUntrack(null);
+
+    const prevWallets = [...wallets];
+    setWallets((cur) => cur.filter((w) => w.address !== addr && w.id !== addr));
+
     try {
-      await untrackWallet(address);
-      setWallets(wallets.filter((w) => w.address !== address));
+      await untrackWallet(addr);
+      showToast('success', 'Wallet untracked successfully.');
     } catch (err: any) {
-      alert(err.message || 'Failed to untrack wallet');
+      setWallets(prevWallets);
+      showToast('error', err.message || 'Failed to untrack wallet');
     }
   };
 
@@ -66,6 +110,87 @@ export default function SmartWalletsPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* Toast Notification */}
+      {toast && (
+        <div
+          style={{
+            padding: '12px 18px',
+            borderRadius: 'var(--radius)',
+            border: `1px solid ${toast.type === 'success' ? '#10b981' : '#f43f5e'}`,
+            background: toast.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)',
+            color: toast.type === 'success' ? '#10b981' : '#f43f5e',
+            fontSize: '13px',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '10px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>{toast.type === 'success' ? '✓' : '⚠️'}</span>
+            <span>{toast.message}</span>
+          </div>
+          <button
+            onClick={() => setToast(null)}
+            style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: '14px' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Untrack Confirmation Modal */}
+      {pendingUntrack && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+        >
+          <div
+            style={{
+              background: '#0d0e15',
+              border: '1px solid #1f2233',
+              borderRadius: '12px',
+              maxWidth: '420px',
+              width: '100%',
+              padding: '24px',
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.6)',
+            }}
+          >
+            <div style={{ fontSize: '16px', fontWeight: 800, color: '#ffffff', marginBottom: '8px' }}>
+              Untrack Wallet?
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5', marginBottom: '16px' }}>
+              Are you sure you want to stop tracking <strong className="mono" style={{ color: '#ffffff' }}>{pendingUntrack}</strong>? You will no longer receive swap alerts or copy signals for this address.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                onClick={() => setPendingUntrack(null)}
+                className="btn btn-secondary"
+                style={{ padding: '8px 14px', fontSize: '12px' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmUntrack}
+                className="btn btn-primary"
+                style={{ padding: '8px 14px', fontSize: '12px', background: '#f43f5e', borderColor: '#f43f5e' }}
+              >
+                Untrack Wallet
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header Banner */}
       <div className="panel" style={{ padding: '20px', background: 'var(--bg-secondary)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
@@ -178,7 +303,7 @@ export default function SmartWalletsPage() {
                       </button>
 
                       <button
-                        onClick={() => handleUntrack(w.address)}
+                        onClick={() => setPendingUntrack(w.address)}
                         className="btn btn-ghost btn-sm"
                         style={{ color: 'var(--down)', padding: '2px 6px' }}
                         title="Remove tracking"

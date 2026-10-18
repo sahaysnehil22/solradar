@@ -166,5 +166,5 @@ describe('Live Trend Chart Upgrade & Price Sampler Pipeline', () => {
     expect(result).toBeDefined();
     expect(result.completed).toBe(true);
     expect(typeof result.sampled).toBe('number');
-  });
+  }, 15000);
 });

@@ -485,6 +485,31 @@ export class TokensService {
             valB = new Date(b.token.firstSeenAt).getTime();
             break;
         }
+
+        if (searchQuery) {
+          const symA = a.token.symbol.toLowerCase();
+          const symB = b.token.symbol.toLowerCase();
+          const nameA = a.token.name.toLowerCase();
+          const nameB = b.token.name.toLowerCase();
+
+          const getRelevance = (sym: string, name: string, mint: string) => {
+            if (sym === searchQuery) return 100;
+            if (sym.startsWith(searchQuery)) return 80;
+            if (sym.includes(searchQuery)) return 60;
+            if (name === searchQuery) return 40;
+            if (name.includes(searchQuery)) return 20;
+            if (mint.toLowerCase().includes(searchQuery)) return 10;
+            return 0;
+          };
+
+          const relA = getRelevance(symA, nameA, a.token.mint);
+          const relB = getRelevance(symB, nameB, b.token.mint);
+
+          if (relA !== relB) {
+            return relB - relA; // Higher relevance first
+          }
+        }
+
         return query.sortDir === 'asc' ? valA - valB : valB - valA;
       });
 

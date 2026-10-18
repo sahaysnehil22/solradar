@@ -73,11 +73,16 @@ export class ReferralsService {
     const referrals = await prisma.referral.findMany({ where: { referrerUserId: userId } });
     const credits = await prisma.referralCredit.findMany({ where: { userId, status: 'active' } });
 
+    const totalDiscount = credits.length > 0 ? Math.min(credits.length * REFERRAL_DISCOUNT.percentOff, 100) : 0;
+    const estimatedSavings = Number(((totalDiscount / 100) * 50).toFixed(2));
+
     return {
       totalReferrals: referrals.length,
       activeCredits: credits,
+      effectiveDiscountPercent: totalDiscount,
       percentOff: REFERRAL_DISCOUNT.percentOff,
       monthsRemaining: credits.reduce((acc: number, c: any) => acc + (c.monthsTotal - c.monthsApplied), 0),
+      estimatedSavingsUsd: estimatedSavings,
     };
   }
 }

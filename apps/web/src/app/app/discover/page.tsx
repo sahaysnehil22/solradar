@@ -145,12 +145,13 @@ export default function DiscoverPage() {
   const [copiedMint, setCopiedMint] = useState<string | null>(null);
   const [copiedHolder, setCopiedHolder] = useState<string | null>(null);
 
-  const fetchTokensList = async () => {
+  const fetchTokensList = async (overrideStage?: 'all' | 'new' | 'curve' | 'migrated') => {
     try {
+      const activeStage = overrideStage ?? stage;
       const sortBy =
         timeRange === '24h' ? 'volume_24h' : timeRange === '1h' ? 'volume_1h' : 'volume_5m';
       const res = await getTokens({
-        stage,
+        stage: activeStage,
         sortBy,
         sortDir: 'desc',
         search: search.trim() || undefined,
@@ -173,7 +174,7 @@ export default function DiscoverPage() {
 
   useEffect(() => {
     fetchTokensList();
-    const interval = setInterval(fetchTokensList, 10000);
+    const interval = setInterval(() => fetchTokensList(), 10000);
     return () => clearInterval(interval);
   }, [stage, timeRange, search, minLiquidity, maxRisk, mintRevokedOnly, freezeRevokedOnly]);
 
@@ -297,7 +298,10 @@ export default function DiscoverPage() {
             {(['all', 'new', 'curve', 'migrated'] as const).map((s) => (
               <button
                 key={s}
-                onClick={() => setStage(s)}
+                onClick={() => {
+                  setStage(s);
+                  fetchTokensList(s);
+                }}
                 style={{
                   background: stage === s ? '#1e2235' : 'transparent',
                   color: stage === s ? '#ffffff' : 'var(--text-muted)',
@@ -610,51 +614,63 @@ export default function DiscoverPage() {
 
                     {/* 6. Token Info Column (The exact Axiom micro-badge matrix) */}
                     <td>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                        {/* Top row of micro-badges */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'nowrap' }}>
-                          <span
-                            className={`axiom-pill ${snapshot.top10Pct > 50 ? 'axiom-pill-red' : 'axiom-pill-green'}`}
-                            title={`Top 10 Holder Concentration: ${snapshot.top10Pct.toFixed(1)}%`}
-                          >
-                            👤 {snapshot.top10Pct.toFixed(1)}%
-                          </span>
-                          <span
-                            className={`axiom-pill ${snapshot.devHoldingPct > 10 ? 'axiom-pill-red' : 'axiom-pill-green'}`}
-                            title={`Dev Holding: ${snapshot.devHoldingPct.toFixed(1)}%`}
-                          >
-                            🔒 {snapshot.devHoldingPct.toFixed(1)}%
-                          </span>
-                          <span className="axiom-pill" title={`Total Holders: ${snapshot.holderCount}`}>
-                            👥 {snapshot.holderCount > 0 ? snapshot.holderCount.toLocaleString() : '0'}
-                          </span>
-                          <span
-                            className={`axiom-pill ${paidDex ? 'axiom-pill-green' : 'axiom-pill-red'}`}
-                            title={paidDex ? 'DEX Listing / Boost Paid' : 'Unpaid DEX listing'}
-                          >
-                            {paidDex ? '🟢 Paid' : '🔴 Unpaid'}
-                          </span>
-                        </div>
+                      {(() => {
+                        const isEnriched = snapshot.holderCount > 0 || snapshot.top10Pct > 0;
+                        const top10Display = isEnriched && snapshot.top10Pct > 0 ? `${snapshot.top10Pct.toFixed(1)}%` : '—';
+                        const devHoldDisplay = isEnriched && snapshot.devHoldingPct > 0 ? `${snapshot.devHoldingPct.toFixed(1)}%` : (isEnriched ? '0.0%' : '—');
+                        const holdersDisplay = snapshot.holderCount > 0 ? snapshot.holderCount.toLocaleString() : '—';
+                        const lpDisplay = snapshot.stage === 'migrated' ? '100%' : (snapshot.lpBurnedOrLockedPct > 0 ? `${snapshot.lpBurnedOrLockedPct.toFixed(0)}%` : '—');
+                        const curveDisplay = snapshot.stage === 'migrated' ? '100%' : (snapshot.curveProgress ? `${snapshot.curveProgress}%` : '—');
+                        const devBalDisplay = snapshot.devBalance ? `${snapshot.devBalance}%` : '—';
 
-                        {/* Bottom row of micro-badges */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'nowrap' }}>
-                          <span className="axiom-pill" title="Dev balance">
-                            ☕ 0%
-                          </span>
-                          <span className="axiom-pill" title="Bonding curve progress / LP">
-                            🌿 {snapshot.stage === 'migrated' ? '100%' : '4.3%'}
-                          </span>
-                          <span
-                            className={`axiom-pill ${isSafe ? 'axiom-pill-green' : 'axiom-pill-amber'}`}
-                            title={isSafe ? 'Mint & Freeze Auth Revoked (Safe)' : 'Auth active (Review)'}
-                          >
-                            {isSafe ? '🛡️ Safe' : '⚠️ Review'}
-                          </span>
-                          <span className="axiom-pill" title="LP Locked / Burned">
-                            💧 {snapshot.lpBurnedOrLockedPct > 0 ? `${snapshot.lpBurnedOrLockedPct.toFixed(0)}%` : '100%'}
-                          </span>
-                        </div>
-                      </div>
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            {/* Top row of micro-badges */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'nowrap' }}>
+                              <span
+                                className={`axiom-pill ${snapshot.top10Pct > 50 ? 'axiom-pill-red' : top10Display === '—' ? '' : 'axiom-pill-green'}`}
+                                title={`Top 10 Holder Concentration: ${top10Display}`}
+                              >
+                                👤 {top10Display}
+                              </span>
+                              <span
+                                className={`axiom-pill ${snapshot.devHoldingPct > 10 ? 'axiom-pill-red' : devHoldDisplay === '—' ? '' : 'axiom-pill-green'}`}
+                                title={`Dev Holding: ${devHoldDisplay}`}
+                              >
+                                🔒 {devHoldDisplay}
+                              </span>
+                              <span className="axiom-pill" title={`Total Holders: ${holdersDisplay}`}>
+                                👥 {holdersDisplay}
+                              </span>
+                              <span
+                                className={`axiom-pill ${paidDex ? 'axiom-pill-green' : 'axiom-pill-red'}`}
+                                title={paidDex ? 'DEX Listing / Boost Paid' : 'Unpaid DEX listing'}
+                              >
+                                {paidDex ? '🟢 Paid' : '🔴 Unpaid'}
+                              </span>
+                            </div>
+
+                            {/* Bottom row of micro-badges */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'nowrap' }}>
+                              <span className="axiom-pill" title="Dev balance">
+                                ☕ {devBalDisplay}
+                              </span>
+                              <span className="axiom-pill" title="Bonding curve progress / LP">
+                                🌿 {curveDisplay}
+                              </span>
+                              <span
+                                className={`axiom-pill ${isSafe ? 'axiom-pill-green' : 'axiom-pill-amber'}`}
+                                title={isSafe ? 'Mint & Freeze Auth Revoked (Safe)' : 'Auth active (Review)'}
+                              >
+                                {isSafe ? '🛡️ Safe' : '⚠️ Review'}
+                              </span>
+                              <span className="axiom-pill" title="LP Locked / Burned">
+                                💧 {lpDisplay}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </td>
 
                     {/* 7. Action Column (Axiom Electric Blue Pill Button) */}

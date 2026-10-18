@@ -53,9 +53,16 @@ export class WalletsService {
     return record;
   }
 
-  async untrackWallet(userId: string, address: string): Promise<boolean> {
+  async untrackWallet(userId: string, addressOrId: string): Promise<boolean> {
+    const clean = (addressOrId || '').trim();
     const result = await prisma.trackedWallet.deleteMany({
-      where: { userId, address },
+      where: {
+        userId,
+        OR: [
+          { address: clean },
+          { id: clean },
+        ],
+      },
     });
     return result.count > 0;
   }

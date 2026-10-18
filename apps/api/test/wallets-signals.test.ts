@@ -30,19 +30,39 @@ describe('Tracked Wallets, Copy Signals & Portfolio Integration', () => {
   });
 
   it('enforces plan limits on tracked wallets for free vs scout vs hunter tier', async () => {
-    const targetAddress = '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU';
+    const targetAddress = '5Q544fKrFoe6tsEbD7S8EmxGTJY6cSdfNSWDkxV82sA';
 
-    // Free user has limit of 0 tracked wallets
-    const freeRes = await app.inject({
+    // Free user can track 1st wallet successfully
+    const freeRes1 = await app.inject({
       method: 'POST',
       url: '/wallets/track',
       headers: { authorization: `Bearer ${userToken}` },
-      payload: { address: targetAddress, label: 'Top Whale' },
+      payload: { address: targetAddress, label: 'Raydium Authority' },
     });
-    expect(freeRes.statusCode).toBe(400);
-    expect(JSON.parse(freeRes.body).error).toContain('Plan limit reached');
+    expect(freeRes1.statusCode).toBe(200);
+    const tracked = JSON.parse(freeRes1.body);
+    expect(tracked.address).toBe(targetAddress);
 
-    // Upgrade user to Scout (limit: 1) in database
+    // Free user adding a 2nd wallet should fail with plan limit error
+    const freeRes2 = await app.inject({
+      method: 'POST',
+      url: '/wallets/track',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { address: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU', label: 'Second Whale' },
+    });
+    expect(freeRes2.statusCode).toBe(400);
+    expect(JSON.parse(freeRes2.body).error).toContain('Plan limit reached');
+
+    // Untrack wallet works cleanly
+    const deleteRes = await app.inject({
+      method: 'DELETE',
+      url: `/wallets/${targetAddress}`,
+      headers: { authorization: `Bearer ${userToken}` },
+    });
+    expect(deleteRes.statusCode).toBe(200);
+    expect(JSON.parse(deleteRes.body).success).toBe(true);
+
+    // Upgrade user to Scout (limit: 3) in database
     await prisma.user.update({
       where: { id: userId },
       data: { plan: PlanCode.SCOUT },
@@ -52,19 +72,9 @@ describe('Tracked Wallets, Copy Signals & Portfolio Integration', () => {
       method: 'POST',
       url: '/wallets/track',
       headers: { authorization: `Bearer ${userToken}` },
-      payload: { address: targetAddress, label: 'Top Whale' },
+      payload: { address: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU', label: 'Top Whale' },
     });
     expect(scoutRes1.statusCode).toBe(200);
-
-    // Scout adding a 2nd wallet should fail
-    const scoutRes2 = await app.inject({
-      method: 'POST',
-      url: '/wallets/track',
-      headers: { authorization: `Bearer ${userToken}` },
-      payload: { address: '9xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsV', label: 'Second Whale' },
-    });
-    expect(scoutRes2.statusCode).toBe(400);
-    expect(JSON.parse(scoutRes2.body).error).toContain('Plan limit reached');
   });
 
   it('records wallet trade and emits signal while dropping duplicate signatures', async () => {

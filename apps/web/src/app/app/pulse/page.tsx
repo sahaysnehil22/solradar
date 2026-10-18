@@ -11,6 +11,15 @@ export default function PulsePage() {
   const [isPaused, setIsPaused] = useState(false);
   const [copiedMint, setCopiedMint] = useState<string | null>(null);
   const [alertSuccessMint, setAlertSuccessMint] = useState<string | null>(null);
+  const [pendingSnipeAlert, setPendingSnipeAlert] = useState<{
+    symbol: string;
+    mint: string;
+    launchpad: string;
+    minLiquidityUsd: number;
+    maxRiskScore: number;
+  } | null>(null);
+  const [alertDeploying, setAlertDeploying] = useState(false);
+  const [alertToast, setAlertToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const fetchFeed = async () => {
@@ -48,18 +57,42 @@ export default function PulsePage() {
     setTimeout(() => setCopiedMint(null), 2000);
   };
 
-  const handleQuickSnipeAlert = async (symbol: string, mint: string) => {
+  const handleOpenAlertModal = (token: any, snapshot: any) => {
+    const launchpad = snapshot?.stage === 'migrated' ? 'Raydium' : 'Pump.fun';
+    setPendingSnipeAlert({
+      symbol: token?.symbol || 'TOKEN',
+      mint: token?.mint || '',
+      launchpad,
+      minLiquidityUsd: 1000,
+      maxRiskScore: 70,
+    });
+  };
+
+  const confirmDeployAlert = async () => {
+    if (!pendingSnipeAlert) return;
+    setAlertDeploying(true);
     try {
       await createSnipeRule({
-        name: `Snipe Alert: $${symbol}`,
-        minLiquidityUsd: 1000,
-        maxRiskScore: 70,
+        name: `Snipe Alert: $${pendingSnipeAlert.symbol}`,
+        launchpad: pendingSnipeAlert.launchpad.toLowerCase(),
+        minLiquidityUsd: pendingSnipeAlert.minLiquidityUsd,
+        maxRiskScore: pendingSnipeAlert.maxRiskScore,
+        channel: 'telegram',
       });
-      setAlertSuccessMint(mint);
-      setTimeout(() => setAlertSuccessMint(null), 2500);
-    } catch {
-      setAlertSuccessMint(mint);
-      setTimeout(() => setAlertSuccessMint(null), 2500);
+      setAlertSuccessMint(pendingSnipeAlert.mint);
+      setAlertToast({
+        type: 'success',
+        message: `Snipe rule for $${pendingSnipeAlert.symbol} deployed! Matching signals will alert via Telegram.`,
+      });
+      setPendingSnipeAlert(null);
+      setTimeout(() => {
+        setAlertSuccessMint(null);
+        setAlertToast(null);
+      }, 4000);
+    } catch (err: any) {
+      setAlertToast({ type: 'error', message: err.message || 'Failed to deploy snipe alert' });
+    } finally {
+      setAlertDeploying(false);
     }
   };
 
@@ -69,6 +102,119 @@ export default function PulsePage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      {/* Toast Notification */}
+      {alertToast && (
+        <div
+          style={{
+            padding: '12px 18px',
+            borderRadius: 'var(--radius)',
+            border: `1px solid ${alertToast.type === 'success' ? '#10b981' : '#f43f5e'}`,
+            background: alertToast.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)',
+            color: alertToast.type === 'success' ? '#10b981' : '#f43f5e',
+            fontSize: '13px',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '10px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>{alertToast.type === 'success' ? '✓' : '⚠️'}</span>
+            <span>{alertToast.message}</span>
+          </div>
+          <button
+            onClick={() => setAlertToast(null)}
+            style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: '14px' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Alert Confirmation Modal */}
+      {pendingSnipeAlert && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+        >
+          <div
+            style={{
+              background: '#0d0e15',
+              border: '1px solid #1f2233',
+              borderRadius: '12px',
+              maxWidth: '440px',
+              width: '100%',
+              padding: '24px',
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.6)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <BellIcon size={18} />
+              <div style={{ fontSize: '16px', fontWeight: 800, color: '#ffffff' }}>
+                Deploy Snipe Alert for ${pendingSnipeAlert.symbol}?
+              </div>
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px', lineHeight: '1.4' }}>
+              Deploy a live on-chain snipe rule. When matching launches or liquidity spikes occur, you will receive an instant signal via Telegram.
+            </p>
+
+            <div style={{ background: '#07080c', borderRadius: '8px', padding: '12px', border: '1px solid #161822', display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-sub)' }}>Target Token:</span>
+                <span className="mono" style={{ color: '#ffffff', fontWeight: 700 }}>
+                  ${pendingSnipeAlert.symbol} ({pendingSnipeAlert.mint ? `${pendingSnipeAlert.mint.substring(0, 6)}...${pendingSnipeAlert.mint.slice(-4)}` : 'Mint'})
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-sub)' }}>Launchpad:</span>
+                <span style={{ color: '#ffffff' }}>{pendingSnipeAlert.launchpad}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-sub)' }}>Min Liquidity Filter:</span>
+                <span className="num-mono" style={{ color: '#10b981' }}>&gt; ${pendingSnipeAlert.minLiquidityUsd.toLocaleString()}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-sub)' }}>Max Risk Cutoff:</span>
+                <span className="num-mono" style={{ color: '#f59e0b' }}>&le; {pendingSnipeAlert.maxRiskScore}/100</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-sub)' }}>Dispatch Channel:</span>
+                <span style={{ color: '#4f75fe' }}>Telegram Instant Alert</span>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                onClick={() => setPendingSnipeAlert(null)}
+                disabled={alertDeploying}
+                className="btn btn-secondary"
+                style={{ padding: '8px 14px', fontSize: '12px' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeployAlert}
+                disabled={alertDeploying}
+                className="btn btn-primary"
+                style={{ padding: '8px 14px', fontSize: '12px', background: '#4f75fe', borderColor: '#4f75fe' }}
+              >
+                {alertDeploying ? 'Deploying...' : 'Confirm & Deploy Alert'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Pulse Controls Bar */}
       <div className="panel" style={{ padding: '12px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -249,7 +395,7 @@ export default function PulsePage() {
                     </button>
 
                     <button
-                      onClick={() => handleQuickSnipeAlert(token.symbol, token.mint)}
+                      onClick={() => handleOpenAlertModal(token, snapshot)}
                       className="btn btn-secondary btn-sm"
                       title="Set quick snipe alert"
                       style={{ padding: '4px 8px', fontSize: '11px' }}
@@ -261,7 +407,7 @@ export default function PulsePage() {
                     </button>
 
                     <a
-                      href={links.jupiter}
+                      href={`https://jup.ag/swap/SOL-${token.mint}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="btn btn-primary btn-sm"

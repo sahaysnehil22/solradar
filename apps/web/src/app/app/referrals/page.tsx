@@ -9,34 +9,86 @@ export default function ReferralsPage() {
   const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [copyNotification, setCopyNotification] = useState<string | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
+
     async function loadData() {
       try {
         const [refData, histData] = await Promise.all([
-          getReferralsData(),
-          getReferralHistory(),
+          getReferralsData().catch(() => null),
+          getReferralHistory().catch(() => []),
         ]);
-        setData(refData);
-        setHistory(histData || []);
+        if (isMounted) {
+          setData(refData || null);
+          setHistory(Array.isArray(histData) ? histData : []);
+        }
       } catch (err) {
         console.error('Failed to load referral ledger:', err);
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     }
+
     loadData();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const copyLink = () => {
-    if (!data?.referralLink) return;
-    navigator.clipboard.writeText(data.referralLink);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    const code = data?.referralCode || 'SOL20';
+    const link =
+      typeof window !== 'undefined'
+        ? `${window.location.origin}/app/referrals?ref=${code}`
+        : (data?.referralLink || `https://solradar.io/app/referrals?ref=${code}`);
+
+    try {
+      navigator.clipboard.writeText(link);
+      setCopied(true);
+      setCopyNotification(`Referral link copied: ${link}`);
+      setTimeout(() => {
+        setCopied(false);
+        setCopyNotification(null);
+      }, 3000);
+    } catch (err) {
+      console.error('Failed to copy referral link:', err);
+    }
   };
+
+  const discountPercent = data?.effectiveDiscountPercent ?? data?.percentOff ?? 0;
+  const monthsRemaining = data?.monthsRemaining ?? 0;
+  const rawSavings = typeof data?.estimatedSavingsUsd === 'number' ? data.estimatedSavingsUsd : 0;
+  const savingsDisplay = rawSavings.toFixed(2);
+  const totalInvites = data?.totalReferrals ?? 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* Toast Confirmation */}
+      {copyNotification && (
+        <div
+          style={{
+            padding: '10px 16px',
+            background: 'rgba(16, 185, 129, 0.15)',
+            border: '1px solid #10b981',
+            borderRadius: 'var(--radius)',
+            color: '#10b981',
+            fontSize: '13px',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <CheckIcon size={14} />
+          <span>{copyNotification}</span>
+        </div>
+      )}
+
       {/* Banner */}
       <div className="panel" style={{ padding: '20px', background: 'var(--bg-secondary)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
@@ -51,25 +103,38 @@ export default function ReferralsPage() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span className="mono" style={{ padding: '8px 12px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius)', fontSize: '12px' }}>
+            <span
+              className="mono"
+              style={{
+                padding: '8px 12px',
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 'var(--radius)',
+                fontSize: '12px',
+              }}
+            >
               {data?.referralCode || 'SOL20'}
             </span>
-            <button onClick={copyLink} className="btn btn-primary" style={{ padding: '8px 14px' }}>
+            <button
+              onClick={copyLink}
+              className="btn btn-primary"
+              style={{ padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
               {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
-              <span style={{ marginLeft: '4px' }}>{copied ? 'Copied Link' : 'Copy Share Link'}</span>
+              <span>{copied ? 'Copied Link' : 'Copy Share Link'}</span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* Discount Ledger Cards (Fed from Real Backend API) */}
+      {/* Discount Ledger Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
         <div className="panel" style={{ padding: '18px' }}>
           <div style={{ fontSize: '11px', color: 'var(--text-sub)', textTransform: 'uppercase', fontWeight: 700 }}>
             Active Discount Rate
           </div>
           <div style={{ fontSize: '28px', fontWeight: 900, marginTop: '4px' }} className="num-mono num-up">
-            {data ? `${data.effectiveDiscountPercent}% OFF` : '0% OFF'}
+            {discountPercent}% OFF
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
             Applied automatically to monthly invoice.
@@ -81,7 +146,7 @@ export default function ReferralsPage() {
             Months Remaining
           </div>
           <div style={{ fontSize: '28px', fontWeight: 900, marginTop: '4px' }} className="num-mono">
-            {data ? `${data.monthsRemaining} Months` : '0 Months'}
+            {monthsRemaining} Months
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
             Cumulative duration across valid referrals.
@@ -93,7 +158,7 @@ export default function ReferralsPage() {
             Estimated Monthly Savings
           </div>
           <div style={{ fontSize: '28px', fontWeight: 900, marginTop: '4px' }} className="num-mono num-up">
-            ${data ? data.estimatedSavingsUsd.toFixed(2) : '0.00'}
+            ${savingsDisplay}
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
             Calculated against active subscription tier.
@@ -105,7 +170,7 @@ export default function ReferralsPage() {
             Successful Invites
           </div>
           <div style={{ fontSize: '28px', fontWeight: 900, marginTop: '4px' }} className="num-mono">
-            {data ? data.totalReferrals : 0}
+            {totalInvites}
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
             Traders joined via your unique link.
@@ -137,19 +202,23 @@ export default function ReferralsPage() {
                 </tr>
               </thead>
               <tbody>
-                {history.map((h) => (
-                  <tr key={h.id}>
-                    <td className="mono" style={{ fontSize: '12px' }}>{h.id.substring(0, 12)}...</td>
-                    <td>{new Date(h.createdAt).toLocaleDateString()}</td>
-                    <td>
-                      <span className={`badge ${h.status === 'applied' ? 'badge-safe' : 'badge-demo'}`}>
-                        {h.status}
-                      </span>
-                    </td>
-                    <td className="num-mono num-up">+20% / Month</td>
-                    <td>3 Months from activation</td>
-                  </tr>
-                ))}
+                {history.map((h) => {
+                  const safeDate = h.createdAt ? new Date(h.createdAt).toLocaleDateString() : 'Recent';
+                  const safeId = typeof h.id === 'string' ? `${h.id.substring(0, 12)}...` : 'REF-KEY';
+                  return (
+                    <tr key={h.id || Math.random()}>
+                      <td className="mono" style={{ fontSize: '12px' }}>{safeId}</td>
+                      <td>{safeDate}</td>
+                      <td>
+                        <span className={`badge ${h.status === 'applied' ? 'badge-safe' : 'badge-demo'}`}>
+                          {h.status || 'pending'}
+                        </span>
+                      </td>
+                      <td className="num-mono num-up">+20% / Month</td>
+                      <td>3 Months from activation</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

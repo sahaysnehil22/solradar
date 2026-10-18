@@ -19,6 +19,7 @@ export default function SnipeAlertsPage() {
   const [copiedMint, setCopiedMint] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [pendingDeleteRule, setPendingDeleteRule] = useState<{ id: string; name: string } | null>(null);
 
   const loadData = async () => {
     try {
@@ -65,12 +66,20 @@ export default function SnipeAlertsPage() {
     }
   };
 
-  const handleDeleteRule = async (id: string) => {
+  const confirmDeleteRule = async () => {
+    if (!pendingDeleteRule) return;
+    const { id, name } = pendingDeleteRule;
+    setPendingDeleteRule(null);
+
+    const prevRules = [...rules];
+    setRules((cur) => cur.filter((r) => r.id !== id));
+    setSuccessMessage(`Snipe rule "${name}" deleted.`);
+
     try {
       await deleteSnipeRule(id);
-      setRules(rules.filter((r) => r.id !== id));
     } catch (err: any) {
-      alert(err.message || 'Failed to delete rule');
+      setRules(prevRules);
+      setErrorMessage(err.message || 'Failed to delete rule from server.');
     }
   };
 
@@ -82,6 +91,57 @@ export default function SnipeAlertsPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* Delete Confirmation Modal */}
+      {pendingDeleteRule && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+        >
+          <div
+            style={{
+              background: '#0d0e15',
+              border: '1px solid #1f2233',
+              borderRadius: '12px',
+              maxWidth: '420px',
+              width: '100%',
+              padding: '24px',
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.6)',
+            }}
+          >
+            <div style={{ fontSize: '16px', fontWeight: 800, color: '#ffffff', marginBottom: '8px' }}>
+              Delete this snipe rule?
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5', marginBottom: '16px' }}>
+              Are you sure you want to delete <strong style={{ color: '#ffffff' }}>"{pendingDeleteRule.name}"</strong>? You will no longer receive instant alerts for launches matching this rule.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                onClick={() => setPendingDeleteRule(null)}
+                className="btn btn-secondary"
+                style={{ padding: '8px 14px', fontSize: '12px' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteRule}
+                className="btn btn-primary"
+                style={{ padding: '8px 14px', fontSize: '12px', background: '#f43f5e', borderColor: '#f43f5e' }}
+              >
+                Delete Rule
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Overview Banner */}
       <div className="panel" style={{ padding: '20px', background: 'var(--bg-secondary)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
@@ -231,7 +291,7 @@ export default function SnipeAlertsPage() {
                       </div>
                     </div>
                     <button
-                      onClick={() => handleDeleteRule(r.id)}
+                      onClick={() => setPendingDeleteRule({ id: r.id, name: r.name })}
                       className="btn btn-ghost btn-sm"
                       style={{ color: 'var(--down)', padding: '2px 6px' }}
                       title="Delete rule"
