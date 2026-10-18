@@ -188,15 +188,19 @@ export default function PortfolioPage() {
                             {isUp ? '+' : ''}${h.pnlUsd?.toFixed(2) || '120.00'} ({isUp ? '+' : ''}{h.pnlPct?.toFixed(1) || '12.0'}%)
                           </td>
                           <td>
-                            <a
-                              href={links.jupiter}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="btn btn-secondary btn-sm"
-                              style={{ padding: '3px 8px', fontSize: '11px' }}
-                            >
-                              Trade ↗
-                            </a>
+                            {links.isValid ? (
+                              <a
+                                href={links.jupiter}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="btn btn-secondary btn-sm"
+                                style={{ padding: '3px 8px', fontSize: '11px' }}
+                              >
+                                Trade ↗
+                              </a>
+                            ) : (
+                              <span style={{ color: 'var(--text-sub)', fontSize: '11px' }}>—</span>
+                            )}
                           </td>
                         </tr>
                       );

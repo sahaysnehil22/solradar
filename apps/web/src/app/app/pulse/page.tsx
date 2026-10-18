@@ -406,15 +406,17 @@ export default function PulsePage() {
                       </span>
                     </button>
 
-                    <a
-                      href={`https://jup.ag/swap/SOL-${token.mint}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn btn-primary btn-sm"
-                      style={{ padding: '4px 10px', fontSize: '11px' }}
-                    >
-                      Trade ↗
-                    </a>
+                    {links.isValid && (
+                      <a
+                        href={links.jupiter}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn btn-primary btn-sm"
+                        style={{ padding: '4px 10px', fontSize: '11px' }}
+                      >
+                        Trade ↗
+                      </a>
+                    )}
                   </div>
                 </div>
               );

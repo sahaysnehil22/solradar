@@ -361,45 +361,51 @@ export default function SnipeAlertsPage() {
                               {copiedMint === t.mint ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
                             </button>
 
-                            <a
-                              href={links.axiom}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="btn btn-secondary btn-sm"
-                              style={{ padding: '3px 7px', fontSize: '11px' }}
-                            >
-                              Axiom ↗
-                            </a>
+                            {links.isValid ? (
+                              <>
+                                <a
+                                  href={links.axiom}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ padding: '3px 7px', fontSize: '11px' }}
+                                >
+                                  Axiom ↗
+                                </a>
 
-                            <a
-                              href={links.bullx}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="btn btn-secondary btn-sm"
-                              style={{ padding: '3px 7px', fontSize: '11px' }}
-                            >
-                              BullX ↗
-                            </a>
+                                <a
+                                  href={links.bullx}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ padding: '3px 7px', fontSize: '11px' }}
+                                >
+                                  BullX ↗
+                                </a>
 
-                            <a
-                              href={links.photon}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="btn btn-secondary btn-sm"
-                              style={{ padding: '3px 7px', fontSize: '11px' }}
-                            >
-                              Photon ↗
-                            </a>
+                                <a
+                                  href={links.photon}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ padding: '3px 7px', fontSize: '11px' }}
+                                >
+                                  Photon ↗
+                                </a>
 
-                            <a
-                              href={links.jupiter}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="btn btn-primary btn-sm"
-                              style={{ padding: '3px 8px', fontSize: '11px' }}
-                            >
-                              Jupiter ↗
-                            </a>
+                                <a
+                                  href={links.jupiter}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="btn btn-primary btn-sm"
+                                  style={{ padding: '3px 8px', fontSize: '11px' }}
+                                >
+                                  Jupiter ↗
+                                </a>
+                              </>
+                            ) : (
+                              <span style={{ color: 'var(--text-sub)', fontSize: '11px' }}>—</span>
+                            )}
                           </div>
                         </td>
                       </tr>

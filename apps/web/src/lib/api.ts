@@ -48,9 +48,18 @@ export function getStoredUser(): UserSession | null {
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getStoredToken();
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
   };
+
+  // Only set Content-Type: application/json if there is an actual request body
+  // Fastify throws FST_ERR_CTP_EMPTY_JSON_BODY if Content-Type is application/json with an empty body
+  if (options.body) {
+    if (!headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+  } else {
+    delete headers['Content-Type'];
+  }
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -257,18 +266,43 @@ export async function getAdminStats() {
   return request<any>('/admin/stats');
 }
 
+export const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112';
+
+/**
+ * Validates whether a string is a genuine Solana Base58 public key.
+ * Excludes non-Base58 strings, improper length (<32 or >44), and test placeholders.
+ */
+export function isValidSolanaAddress(address?: string | null): boolean {
+  if (!address) return false;
+  const clean = address.trim();
+  const base58Regex = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+  if (!base58Regex.test(clean)) return false;
+  const lower = clean.toLowerCase();
+  if (lower.includes('test') || lower.includes('verify') || lower.includes('placeholder')) {
+    return false;
+  }
+  return true;
+}
+
 /**
  * Deep links for non-custodial manual execution in external terminals.
+ * Uses Jupiter's current URL format with explicit query params:
+ * https://jup.ag/swap?sell=So11111111111111111111111111111111111111112&buy=<tokenMint>
  * Never touches private keys, never signs transactions.
  */
 export function getTradeDeepLinks(mint: string) {
   const cleanMint = (mint || '').trim();
+  const isValid = isValidSolanaAddress(cleanMint);
+
   return {
-    axiom: cleanMint ? `https://axiom.trade/trade/${cleanMint}` : 'https://axiom.trade',
-    bullx: cleanMint ? `https://bullx.io/terminal?chainId=1399811149&address=${cleanMint}` : 'https://bullx.io',
-    photon: cleanMint ? `https://photon-sol.tinyastro.io/en/lp/${cleanMint}` : 'https://photon-sol.tinyastro.io',
-    jupiter: cleanMint ? `https://jup.ag/swap/SOL-${cleanMint}` : 'https://jup.ag',
-    dexscreener: cleanMint ? `https://dexscreener.com/solana/${cleanMint}` : 'https://dexscreener.com',
-    solscan: cleanMint ? `https://solscan.io/token/${cleanMint}` : 'https://solscan.io',
+    isValid,
+    axiom: isValid ? `https://axiom.trade/trade/${cleanMint}` : '',
+    bullx: isValid ? `https://bullx.io/terminal?chainId=1399811149&address=${cleanMint}` : '',
+    photon: isValid ? `https://photon-sol.tinyastro.io/en/lp/${cleanMint}` : '',
+    jupiter: isValid
+      ? `https://jup.ag/swap?sell=${WRAPPED_SOL_MINT}&buy=${cleanMint}`
+      : '',
+    dexscreener: isValid ? `https://dexscreener.com/solana/${cleanMint}` : '',
+    solscan: isValid ? `https://solscan.io/token/${cleanMint}` : '',
   };
 }

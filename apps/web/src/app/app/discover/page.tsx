@@ -675,13 +675,17 @@ export default function DiscoverPage() {
 
                     {/* 7. Action Column (Axiom Electric Blue Pill Button) */}
                     <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
-                      <button
-                        className="axiom-btn-buy"
-                        onClick={() => setQuickBuyToken({ token, snapshot })}
-                        title="1-Tap Instant Buy via Axiom / Photon"
-                      >
-                        Buy 0 SOL
-                      </button>
+                      {links.isValid ? (
+                        <button
+                          className="axiom-btn-buy"
+                          onClick={() => setQuickBuyToken({ token, snapshot })}
+                          title="1-Tap Instant Buy via Axiom / Photon / Jupiter"
+                        >
+                          Buy 0 SOL
+                        </button>
+                      ) : (
+                        <span style={{ color: 'var(--text-sub)', fontSize: '11px' }}>—</span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -776,37 +780,43 @@ export default function DiscoverPage() {
             </div>
 
             {/* 1-Tap Trade Deep-Link Execution Buttons */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <a
-                href={getTradeDeepLinks(quickBuyToken.token.mint).axiom}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="axiom-btn-buy"
-                style={{ width: '100%', padding: '10px', fontSize: '13px', textDecoration: 'none' }}
-              >
-                ⚡ Execute on Axiom.trade ({quickBuyAmount} SOL) ↗
-              </a>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+            {getTradeDeepLinks(quickBuyToken.token.mint).isValid ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <a
-                  href={getTradeDeepLinks(quickBuyToken.token.mint).photon}
+                  href={getTradeDeepLinks(quickBuyToken.token.mint).axiom}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="btn btn-secondary btn-sm"
-                  style={{ justifyContent: 'center', fontSize: '11px' }}
+                  className="axiom-btn-buy"
+                  style={{ width: '100%', padding: '10px', fontSize: '13px', textDecoration: 'none' }}
                 >
-                  Photon ↗
+                  ⚡ Execute on Axiom.trade ({quickBuyAmount} SOL) ↗
                 </a>
-                <a
-                  href={getTradeDeepLinks(quickBuyToken.token.mint).jupiter}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn btn-secondary btn-sm"
-                  style={{ justifyContent: 'center', fontSize: '11px' }}
-                >
-                  Jupiter Swap ↗
-                </a>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <a
+                    href={getTradeDeepLinks(quickBuyToken.token.mint).photon}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-secondary btn-sm"
+                    style={{ justifyContent: 'center', fontSize: '11px' }}
+                  >
+                    Photon ↗
+                  </a>
+                  <a
+                    href={getTradeDeepLinks(quickBuyToken.token.mint).jupiter}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-secondary btn-sm"
+                    style={{ justifyContent: 'center', fontSize: '11px' }}
+                  >
+                    Jupiter Swap ↗
+                  </a>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div style={{ padding: '12px', background: 'rgba(255,255,255,0.05)', borderRadius: '6px', textAlign: 'center', fontSize: '12px', color: 'var(--text-sub)' }}>
+                Test token / Placeholder mint: Live swap is disabled.
+              </div>
+            )}
 
             <div style={{ fontSize: '10px', color: 'var(--text-sub)', textAlign: 'center' }}>
               Non-custodial execution • Trades execute securely in your external wallet
@@ -1016,25 +1026,41 @@ export default function DiscoverPage() {
               </div>
 
               {/* Action Buttons in Drawer */}
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button
-                  className="axiom-btn-buy"
-                  style={{ flex: 1, padding: '10px', fontSize: '13px' }}
-                  onClick={() => setQuickBuyToken(selectedToken)}
-                >
-                  Buy 0 SOL
-                </button>
-                <a
-                  href={getTradeDeepLinks(selectedToken.token.mint).axiom}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn btn-secondary"
-                  style={{ padding: '10px 16px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}
-                >
-                  <span>Axiom Terminal</span>
-                  <ExternalLinkIcon size={12} />
-                </a>
-              </div>
+              {getTradeDeepLinks(selectedToken.token.mint).isValid ? (
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    className="axiom-btn-buy"
+                    style={{ flex: 1, padding: '10px', fontSize: '13px' }}
+                    onClick={() => setQuickBuyToken(selectedToken)}
+                  >
+                    Buy 0 SOL
+                  </button>
+                  <a
+                    href={getTradeDeepLinks(selectedToken.token.mint).axiom}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-secondary"
+                    style={{ padding: '10px 16px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <span>Axiom Terminal</span>
+                    <ExternalLinkIcon size={12} />
+                  </a>
+                  <a
+                    href={getTradeDeepLinks(selectedToken.token.mint).jupiter}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-primary"
+                    style={{ padding: '10px 16px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <span>Jupiter Swap</span>
+                    <ExternalLinkIcon size={12} />
+                  </a>
+                </div>
+              ) : (
+                <div style={{ padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '6px', textAlign: 'center', fontSize: '12px', color: 'var(--text-sub)' }}>
+                  Test token / Placeholder mint: Live trading unavailable.
+                </div>
+              )}
             </div>
           </div>
         </div>

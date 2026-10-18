@@ -74,40 +74,46 @@ export default function TokenDetailPage({ params }: Props) {
         </div>
 
         {/* External Execution Deep Links */}
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <a
-            href={links.axiom}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn btn-secondary btn-sm"
-          >
-            Axiom ↗
-          </a>
-          <a
-            href={links.bullx}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn btn-secondary btn-sm"
-          >
-            BullX ↗
-          </a>
-          <a
-            href={links.photon}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn btn-secondary btn-sm"
-          >
-            Photon ↗
-          </a>
-          <a
-            href={links.jupiter}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn btn-primary btn-sm"
-          >
-            Trade on Jupiter ↗
-          </a>
-        </div>
+        {links.isValid ? (
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <a
+              href={links.axiom}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-secondary btn-sm"
+            >
+              Axiom ↗
+            </a>
+            <a
+              href={links.bullx}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-secondary btn-sm"
+            >
+              BullX ↗
+            </a>
+            <a
+              href={links.photon}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-secondary btn-sm"
+            >
+              Photon ↗
+            </a>
+            <a
+              href={links.jupiter}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-primary btn-sm"
+            >
+              Trade on Jupiter ↗
+            </a>
+          </div>
+        ) : (
+          <div style={{ fontSize: '12px', color: 'var(--text-sub)', fontStyle: 'italic' }}>
+            Test token / Placeholder mint: Live trade deep-links disabled.
+          </div>
+        )}
       </div>
 
       {/* Grid: Risk & Safety Panel | Market Snapshot */}

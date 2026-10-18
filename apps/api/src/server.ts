@@ -38,6 +38,7 @@ export async function createServer(): Promise<FastifyInstance> {
   // Verify database connection at startup and apply idempotent column migrations
   await checkPrismaConnection();
   await snipeService.ensureSnipeTables();
+  await walletsService.ensureWalletsCleaned();
   await tokensService.ensureInitialTokensSeeded();
 
   // Blocker 2: Sync Helius Webhook Addresses on API Startup (never wipe)

