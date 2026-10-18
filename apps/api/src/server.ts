@@ -35,6 +35,7 @@ export async function createServer(): Promise<FastifyInstance> {
 
   // Verify database connection at startup
   await checkPrismaConnection();
+  await tokensService.ensureInitialTokensSeeded();
 
   // Security headers with Helmet
   await app.register(helmet, {
@@ -269,10 +270,47 @@ export async function createServer(): Promise<FastifyInstance> {
   });
 
   // 4. Token Screener & Pulse Feed (GET /api/tokens, GET /api/pulse, GET /api/tokens/:mint)
-  const handleTokensQuery = async (req: FastifyRequest) => {
-    const query = TokenQueryDtoSchema.parse(req.query);
-    const search = (req.query as any)?.search as string | undefined;
-    return await tokensService.queryScreener({ ...query, search });
+  const handleTokensQuery = async (req: FastifyRequest, reply: FastifyReply) => {
+    const startTime = Date.now();
+    logger.info('GET /api/tokens query started', { query: req.query });
+
+    try {
+      const query = TokenQueryDtoSchema.parse(req.query);
+      const search = (req.query as any)?.search as string | undefined;
+
+      const timeoutPromise = new Promise<{ data: any[]; tokens: any[]; total: number }>((resolve) => {
+        setTimeout(() => {
+          logger.warn('GET /api/tokens reached 5s timeout threshold; returning fallback payload', {
+            elapsedMs: Date.now() - startTime,
+          });
+          resolve({ data: [], tokens: [], total: 0 });
+        }, 5000);
+      });
+
+      const result = await Promise.race([
+        tokensService.queryScreener({ ...query, search }),
+        timeoutPromise,
+      ]);
+
+      const elapsedMs = Date.now() - startTime;
+      logger.info('GET /api/tokens query completed', {
+        elapsedMs,
+        count: result.data?.length ?? 0,
+        total: result.total ?? 0,
+      });
+
+      return {
+        tokens: result.tokens ?? result.data ?? [],
+        data: result.data ?? result.tokens ?? [],
+        total: result.total ?? 0,
+      };
+    } catch (err: any) {
+      logger.error('GET /api/tokens failed with exception; returning safe empty list', {
+        error: err.message,
+        elapsedMs: Date.now() - startTime,
+      });
+      return { tokens: [], data: [], total: 0 };
+    }
   };
 
   app.get('/tokens', handleTokensQuery);
@@ -280,9 +318,34 @@ export async function createServer(): Promise<FastifyInstance> {
   app.get('/tokens/screener', handleTokensQuery);
 
   const handlePulseQuery = async (req: FastifyRequest) => {
-    const query = TokenQueryDtoSchema.parse({ ...(req.query as any), limit: 30, sortBy: 'first_seen_at', sortDir: 'desc' });
-    const search = (req.query as any)?.search as string | undefined;
-    return await tokensService.queryScreener({ ...query, search });
+    const startTime = Date.now();
+    try {
+      const query = TokenQueryDtoSchema.parse({ ...(req.query as any), limit: 30, sortBy: 'first_seen_at', sortDir: 'desc' });
+      const search = (req.query as any)?.search as string | undefined;
+
+      const timeoutPromise = new Promise<{ data: any[]; tokens: any[]; total: number }>((resolve) => {
+        setTimeout(() => {
+          logger.warn('GET /api/pulse reached 5s timeout threshold; returning fallback payload', {
+            elapsedMs: Date.now() - startTime,
+          });
+          resolve({ data: [], tokens: [], total: 0 });
+        }, 5000);
+      });
+
+      const result = await Promise.race([
+        tokensService.queryScreener({ ...query, search }),
+        timeoutPromise,
+      ]);
+
+      return {
+        tokens: result.tokens ?? result.data ?? [],
+        data: result.data ?? result.tokens ?? [],
+        total: result.total ?? 0,
+      };
+    } catch (err: any) {
+      logger.error('GET /api/pulse failed:', { error: err.message });
+      return { tokens: [], data: [], total: 0 };
+    }
   };
 
   app.get('/pulse', handlePulseQuery);

@@ -79,3 +79,8 @@ export const RISK_THRESHOLDS = {
   DEV_HOLDING_DANGER_PCT: 5,
   MIN_SAFE_LIQUIDITY_USD: 10000,
 };
+
+export const TELEGRAM_BOT_USERNAME = 'solaanaaradarbot';
+export const TELEGRAM_BOT_ID = '8943169326';
+export const TELEGRAM_BOT_URL = 'https://t.me/solaanaaradarbot';
+

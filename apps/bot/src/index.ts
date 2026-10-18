@@ -133,11 +133,11 @@ export function createBot(token = process.env.TELEGRAM_BOT_TOKEN || 'dummy_token
   bot.command('start', async (ctx) => {
     const linkCode = Math.random().toString(36).substring(2, 8).toUpperCase();
     await ctx.reply(
-      `👋 *Welcome to SolRadar (PulseBoard)*\n` +
+      `👋 *Welcome to SolRadar (@solaanaaradarbot)*\n` +
         `The real-time Solana memecoin intelligence terminal & signal bot.\n\n` +
         `🔑 *Account Linking*\n` +
         `Your link code is: \`${linkCode}\`\n` +
-        `Paste this code in your SolRadar Web Settings or open the web app to link your account.\n\n` +
+        `Paste this code in your SolRadar Web Terminal (/app) or sign in with Telegram to link your account.\n\n` +
         `📌 *Key Commands:*\n` +
         `/subscribe — Pick your subscription tier\n` +
         `/watch <mint> — Add token to priority watchlist\n` +

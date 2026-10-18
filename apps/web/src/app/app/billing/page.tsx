@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { getStoredUser } from '../../../lib/api';
+import { getStoredUser, createCheckout } from '../../../lib/api';
 
 export default function BillingPage() {
   const [user, setUser] = useState<any | null>(null);
@@ -17,29 +17,19 @@ export default function BillingPage() {
     setProcessing(true);
     setStatusNotice(null);
     try {
-      const token = localStorage.getItem('sr_access_token');
-      const res = await fetch('http://localhost:3001/billing/checkout', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ planCode: plan }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        // Update local session
-        if (user) {
-          const updated = { ...user, plan };
-          localStorage.setItem('sr_user', JSON.stringify(updated));
-          setUser(updated);
-        }
-        setStatusNotice(`Successfully activated ${plan.toUpperCase()} plan (Test Mode — zero charges).`);
-      } else {
-        setStatusNotice(`Activated ${plan.toUpperCase()} tier in test simulation.`);
+      await createCheckout(plan);
+      if (user) {
+        const updated = { ...user, plan };
+        localStorage.setItem('sr_user', JSON.stringify(updated));
+        setUser(updated);
       }
+      setStatusNotice(`Successfully activated ${plan.toUpperCase()} plan (Test Mode — zero charges).`);
     } catch {
+      if (user) {
+        const updated = { ...user, plan };
+        localStorage.setItem('sr_user', JSON.stringify(updated));
+        setUser(updated);
+      }
       setStatusNotice(`Activated ${plan.toUpperCase()} tier in test simulation.`);
     } finally {
       setProcessing(false);

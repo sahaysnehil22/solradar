@@ -221,6 +221,8 @@ export class AuthService {
 
     const tokens = this.generateTokens(user as any);
     return {
+      token: tokens.accessToken,
+      accessToken: tokens.accessToken,
       user: {
         id: user.id,
         email: user.email,

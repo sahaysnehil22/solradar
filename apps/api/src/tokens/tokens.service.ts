@@ -16,8 +16,26 @@ export interface TokenWithLatestSnapshot {
 }
 
 export class TokensService {
+  private isSeeding = false;
   constructor() {
-    this.seedInitialVerifiedTokens();
+    // Startup seeding is orchestrated after database connection check
+  }
+
+  async ensureInitialTokensSeeded() {
+    if (this.isSeeding) return;
+    this.isSeeding = true;
+    try {
+      const count = await prisma.token.count();
+      if (count >= 10) {
+        logger.info('Verified token pool already seeded:', { count });
+        return;
+      }
+      await this.seedInitialVerifiedTokens();
+    } catch (err: any) {
+      logger.warn('Seed verification handled:', err.message);
+    } finally {
+      this.isSeeding = false;
+    }
   }
 
   private async seedInitialVerifiedTokens() {
@@ -381,116 +399,153 @@ export class TokensService {
     }
 
     return { processedCount: events.length, alertsGenerated: processedAlerts.length };
-  }
-
-  async queryScreener(query: TokenQueryDto & { search?: string }): Promise<{ data: TokenWithLatestSnapshot[]; total: number }> {
-    const tokens = await prisma.token.findMany();
-    const list: TokenWithLatestSnapshot[] = [];
-
-    const searchQuery = query.search?.toLowerCase().trim();
-
-    for (const token of tokens) {
-      if (searchQuery) {
-        const matchSymbol = token.symbol.toLowerCase().includes(searchQuery);
-        const matchName = token.name.toLowerCase().includes(searchQuery);
-        const matchMint = token.mint.toLowerCase().includes(searchQuery);
-        if (!matchSymbol && !matchName && !matchMint) continue;
-      }
-
-      const snapshots = await prisma.tokenSnapshot.findMany({ where: { tokenId: token.id } });
-      if (snapshots.length === 0) continue;
-      const latestSnapshot = snapshots.sort((a: any, b: any) => new Date(b.takenAt).getTime() - new Date(a.takenAt).getTime())[0];
-
-      // Filter stage
-      if (query.stage !== 'all' && latestSnapshot.stage !== query.stage) {
-        continue;
-      }
-
-      // Filter Mcap
-      if (query.minMcap && latestSnapshot.mcap < query.minMcap) continue;
-      if (query.maxMcap && latestSnapshot.mcap > query.maxMcap) continue;
-
-      // Filter Liquidity
-      if (query.minLiquidity && latestSnapshot.liquidityUsd < query.minLiquidity) continue;
-
-      // Filter Security Flags
-      if (query.mintAuthRevokedOnly && !latestSnapshot.mintAuthRevoked) continue;
-      if (query.freezeAuthRevokedOnly && !latestSnapshot.freezeAuthRevoked) continue;
-      if (query.lpBurnedOnly && latestSnapshot.lpBurnedOrLockedPct < 90) continue;
-
-      // Calculate real-time risk report
-      const risk = evaluateTokenRisk({
-        mintAuthorityRevoked: latestSnapshot.mintAuthRevoked,
-        freezeAuthorityRevoked: latestSnapshot.freezeAuthRevoked,
-        lpBurnedOrLockedPct: latestSnapshot.lpBurnedOrLockedPct,
-        top10Pct: latestSnapshot.top10Pct,
-        devHoldingPct: latestSnapshot.devHoldingPct,
-        liquidityUsd: latestSnapshot.liquidityUsd,
-        mcapUsd: latestSnapshot.mcap,
-        volume5m: latestSnapshot.volume5m,
-        buys5m: latestSnapshot.buys,
-        sells5m: latestSnapshot.sells,
-        holderCount: latestSnapshot.holderCount,
+  }  async queryScreener(query: TokenQueryDto & { search?: string }): Promise<{ data: TokenWithLatestSnapshot[]; tokens: TokenWithLatestSnapshot[]; total: number }> {
+    const startTime = Date.now();
+    try {
+      const tokens = await prisma.token.findMany({
+        take: 200,
       });
 
-      if (query.maxRiskScore && risk.riskScore > query.maxRiskScore) continue;
-
-      // Synthetic deterministic sparkline based on price & volume
-      const base = latestSnapshot.price;
-      const sparkline = [
-        base * 0.92,
-        base * 0.95,
-        base * 0.93,
-        base * 0.98,
-        base * 0.96,
-        base * 1.02,
-        base * (latestSnapshot.volume5m > latestSnapshot.volume1h * 0.2 ? 1.05 : 0.99),
-        base,
-      ];
-
-      list.push({ token, snapshot: latestSnapshot, risk, sparkline });
-    }
-
-    // Sort list
-    list.sort((a, b) => {
-      let valA = 0;
-      let valB = 0;
-      switch (query.sortBy) {
-        case 'volume_5m':
-          valA = a.snapshot.volume5m;
-          valB = b.snapshot.volume5m;
-          break;
-        case 'volume_1h':
-          valA = a.snapshot.volume1h;
-          valB = b.snapshot.volume1h;
-          break;
-        case 'volume_24h':
-          valA = a.snapshot.volume24h;
-          valB = b.snapshot.volume24h;
-          break;
-        case 'liquidity_usd':
-          valA = a.snapshot.liquidityUsd;
-          valB = b.snapshot.liquidityUsd;
-          break;
-        case 'mcap':
-          valA = a.snapshot.mcap;
-          valB = b.snapshot.mcap;
-          break;
-        case 'risk_score':
-          valA = a.risk.riskScore;
-          valB = b.risk.riskScore;
-          break;
-        case 'first_seen_at':
-          valA = new Date(a.token.firstSeenAt).getTime();
-          valB = new Date(b.token.firstSeenAt).getTime();
-          break;
+      if (!tokens || tokens.length === 0) {
+        logger.info('queryScreener completed (empty table)', { elapsedMs: Date.now() - startTime });
+        return { data: [], tokens: [], total: 0 };
       }
-      return query.sortDir === 'asc' ? valA - valB : valB - valA;
-    });
 
-    const total = list.length;
-    const paginated = list.slice(query.offset, query.offset + query.limit);
-    return { data: paginated, total };
+      const tokenIds = tokens.map((t: any) => t.id);
+      const snapshots = await prisma.tokenSnapshot.findMany({
+        where: {
+          tokenId: { in: tokenIds },
+        },
+      });
+
+      const snapshotsByTokenId = new Map<string, any[]>();
+      for (const s of snapshots) {
+        let list = snapshotsByTokenId.get(s.tokenId);
+        if (!list) {
+          list = [];
+          snapshotsByTokenId.set(s.tokenId, list);
+        }
+        list.push(s);
+      }
+
+      const list: TokenWithLatestSnapshot[] = [];
+      const searchQuery = query.search?.toLowerCase().trim();
+
+      for (const token of tokens) {
+        if (searchQuery) {
+          const matchSymbol = token.symbol.toLowerCase().includes(searchQuery);
+          const matchName = token.name.toLowerCase().includes(searchQuery);
+          const matchMint = token.mint.toLowerCase().includes(searchQuery);
+          if (!matchSymbol && !matchName && !matchMint) continue;
+        }
+
+        const tSnapshots = snapshotsByTokenId.get(token.id) || [];
+        if (tSnapshots.length === 0) continue;
+        const latestSnapshot = tSnapshots.sort(
+          (a: any, b: any) => new Date(b.takenAt).getTime() - new Date(a.takenAt).getTime()
+        )[0];
+
+        // Filter stage
+        if (query.stage !== 'all' && latestSnapshot.stage !== query.stage) {
+          continue;
+        }
+
+        // Filter Mcap
+        if (query.minMcap && latestSnapshot.mcap < query.minMcap) continue;
+        if (query.maxMcap && latestSnapshot.mcap > query.maxMcap) continue;
+
+        // Filter Liquidity
+        if (query.minLiquidity && latestSnapshot.liquidityUsd < query.minLiquidity) continue;
+
+        // Filter Security Flags
+        if (query.mintAuthRevokedOnly && !latestSnapshot.mintAuthRevoked) continue;
+        if (query.freezeAuthRevokedOnly && !latestSnapshot.freezeAuthRevoked) continue;
+        if (query.lpBurnedOnly && latestSnapshot.lpBurnedOrLockedPct < 90) continue;
+
+        // Calculate real-time risk report
+        const risk = evaluateTokenRisk({
+          mintAuthorityRevoked: latestSnapshot.mintAuthRevoked,
+          freezeAuthorityRevoked: latestSnapshot.freezeAuthRevoked,
+          lpBurnedOrLockedPct: latestSnapshot.lpBurnedOrLockedPct,
+          top10Pct: latestSnapshot.top10Pct,
+          devHoldingPct: latestSnapshot.devHoldingPct,
+          liquidityUsd: latestSnapshot.liquidityUsd,
+          mcapUsd: latestSnapshot.mcap,
+          volume5m: latestSnapshot.volume5m,
+          buys5m: latestSnapshot.buys,
+          sells5m: latestSnapshot.sells,
+          holderCount: latestSnapshot.holderCount,
+        });
+
+        if (query.maxRiskScore && risk.riskScore > query.maxRiskScore) continue;
+
+        // Synthetic deterministic sparkline based on price & volume
+        const base = latestSnapshot.price;
+        const sparkline = [
+          base * 0.92,
+          base * 0.95,
+          base * 0.93,
+          base * 0.98,
+          base * 0.96,
+          base * 1.02,
+          base * (latestSnapshot.volume5m > latestSnapshot.volume1h * 0.2 ? 1.05 : 0.99),
+          base,
+        ];
+
+        list.push({ token, snapshot: latestSnapshot, risk, sparkline });
+      }
+
+      // Sort list
+      list.sort((a, b) => {
+        let valA = 0;
+        let valB = 0;
+        switch (query.sortBy) {
+          case 'volume_5m':
+            valA = a.snapshot.volume5m;
+            valB = b.snapshot.volume5m;
+            break;
+          case 'volume_1h':
+            valA = a.snapshot.volume1h;
+            valB = b.snapshot.volume1h;
+            break;
+          case 'volume_24h':
+            valA = a.snapshot.volume24h;
+            valB = b.snapshot.volume24h;
+            break;
+          case 'liquidity_usd':
+            valA = a.snapshot.liquidityUsd;
+            valB = b.snapshot.liquidityUsd;
+            break;
+          case 'mcap':
+            valA = a.snapshot.mcap;
+            valB = b.snapshot.mcap;
+            break;
+          case 'risk_score':
+            valA = a.risk.riskScore;
+            valB = b.risk.riskScore;
+            break;
+          case 'first_seen_at':
+            valA = new Date(a.token.firstSeenAt).getTime();
+            valB = new Date(b.token.firstSeenAt).getTime();
+            break;
+        }
+        return query.sortDir === 'asc' ? valA - valB : valB - valA;
+      });
+
+      const total = list.length;
+      const paginated = list.slice(query.offset, query.offset + query.limit);
+
+      logger.info('queryScreener completed', {
+        elapsedMs: Date.now() - startTime,
+        total,
+        count: paginated.length,
+      });
+
+      return { data: paginated, tokens: paginated, total };
+    } catch (err: any) {
+      logger.error('queryScreener error:', { error: err.message, elapsedMs: Date.now() - startTime });
+      return { data: [], tokens: [], total: 0 };
+    }
   }
 
   async getTokenDetail(mint: string): Promise<TokenWithLatestSnapshot | null> {

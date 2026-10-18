@@ -468,7 +468,14 @@ class InMemoryDbAdapter {
     return {
       findMany: async ({ where }: any = {}) => {
         let list = Array.from(this.tokenSnapshots.values());
-        if (where?.tokenId) list = list.filter((s) => s.tokenId === where.tokenId);
+        if (where?.tokenId) {
+          if (typeof where.tokenId === 'object' && Array.isArray(where.tokenId.in)) {
+            const set = new Set(where.tokenId.in);
+            list = list.filter((s) => set.has(s.tokenId));
+          } else {
+            list = list.filter((s) => s.tokenId === where.tokenId);
+          }
+        }
         return list;
       },
       create: async ({ data }: any) => {

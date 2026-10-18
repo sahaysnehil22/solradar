@@ -1,5 +1,6 @@
 import React from 'react';
 import { TerminalHeader } from '../../components/TerminalHeader';
+import { AppGuard } from '../../components/AppGuard';
 
 export default function AppLayout({
   children,
@@ -10,7 +11,7 @@ export default function AppLayout({
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <TerminalHeader />
       <main style={{ maxWidth: '1440px', margin: '0 auto', width: '100%', padding: '16px 20px 48px', flex: 1 }}>
-        {children}
+        <AppGuard>{children}</AppGuard>
       </main>
       <footer style={{
         borderTop: '1px solid var(--border-color)',

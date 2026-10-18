@@ -5,11 +5,18 @@ import Link from 'next/link';
 import { getTokens, getTradeDeepLinks } from '../lib/api';
 import { RadarIcon, ShieldCheckIcon, BellIcon, ExternalLinkIcon } from '../components/icons';
 
+import { TELEGRAM_BOT_URL } from '../lib/config';
+import { TelegramLoginWidget } from '../components/TelegramLoginWidget';
+import { getStoredToken } from '../lib/api';
+
 export default function MarketingLandingPage() {
   const [previewTokens, setPreviewTokens] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
+    setIsLoggedIn(!!getStoredToken());
+
     async function loadPreview() {
       try {
         const res = await getTokens({ limit: 6, sortBy: 'volume_5m', sortDir: 'desc' });
@@ -46,7 +53,7 @@ export default function MarketingLandingPage() {
           <a href="#features" className="nav-link">Features</a>
           <a href="#pricing" className="nav-link">Pricing</a>
           <Link href="/app/discover" className="btn btn-primary" style={{ padding: '6px 14px', fontSize: '13px' }}>
-            Launch Terminal
+            {isLoggedIn ? 'Go to Terminal →' : 'Launch Terminal'}
           </Link>
         </div>
       </header>
@@ -86,12 +93,12 @@ export default function MarketingLandingPage() {
           Zero trade execution. Zero custody. No private keys. High-velocity screener, live launch pulse, deterministic rug audits, and instant Telegram snipe signals.
         </p>
 
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '14px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '14px', flexWrap: 'wrap', marginBottom: '28px' }}>
           <Link href="/app/discover" className="btn btn-primary" style={{ padding: '10px 22px', fontSize: '14px' }}>
             Launch Terminal ↗
           </Link>
           <a
-            href="https://t.me/SolRadarBot"
+            href={TELEGRAM_BOT_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-secondary"
@@ -100,6 +107,29 @@ export default function MarketingLandingPage() {
             Get Telegram Alerts ↗
           </a>
         </div>
+
+        {/* Telegram Quick-Login Container on Landing Page */}
+        {!isLoggedIn && (
+          <div style={{
+            maxWidth: '380px',
+            margin: '0 auto',
+            padding: '16px',
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius)',
+          }}>
+            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '10px' }}>
+              Sign in with Telegram to sync alerts & watchlists:
+            </div>
+            <TelegramLoginWidget
+              size="medium"
+              onSuccess={() => {
+                setIsLoggedIn(true);
+                window.location.href = '/app/discover';
+              }}
+            />
+          </div>
+        )}
       </section>
 
       {/* Live-Feel Preview Strip (Real Data from Live API, Never Fake) */}

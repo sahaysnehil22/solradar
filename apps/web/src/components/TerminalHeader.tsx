@@ -3,8 +3,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { getStoredUser, logoutUser, UserSession } from '../lib/api';
+import { getStoredUser, getMe, logoutUser, UserSession } from '../lib/api';
 import { RadarIcon } from './icons';
+import { TelegramLoginWidget } from './TelegramLoginWidget';
 
 export function TerminalHeader() {
   const pathname = usePathname();
@@ -15,7 +16,13 @@ export function TerminalHeader() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // 1. Initial cached state
     setUser(getStoredUser());
+
+    // 2. Validate session against backend /api/auth/me
+    getMe().then((verifiedUser) => {
+      setUser(verifiedUser);
+    });
 
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -211,66 +218,12 @@ export function TerminalHeader() {
                 Connect via Telegram for instant alerts and synced watchlist signals. No passwords required.
               </p>
 
-              {/* Telegram Login Direct Button */}
-              <button
-                onClick={async () => {
-                  try {
-                    // Demo Telegram Auth session for seamless testing
-                    const mockTelegramAuth = {
-                      id: 100000000 + Math.floor(Math.random() * 90000000),
-                      first_name: 'Solana',
-                      last_name: 'Trader',
-                      username: 'sol_ape_' + Math.floor(Math.random() * 999),
-                      auth_date: Math.floor(Date.now() / 1000),
-                      hash: 'test_mock_hash',
-                    };
-                    const res = await fetch('http://localhost:3001/api/auth/telegram', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(mockTelegramAuth),
-                    });
-                    if (res.ok) {
-                      const data = await res.json();
-                      localStorage.setItem('sr_access_token', data.tokens.accessToken);
-                      localStorage.setItem('sr_user', JSON.stringify(data.user));
-                      setUser(data.user);
-                      setLoginModalOpen(false);
-                      router.push('/app/discover');
-                    } else {
-                      // Fallback client local state
-                      const localUser: UserSession = {
-                        id: 'usr_local_' + Date.now(),
-                        email: 'trader@solradar.io',
-                        username: 'SolTrader',
-                        plan: 'hunter',
-                        role: 'user',
-                      };
-                      localStorage.setItem('sr_access_token', 'local_jwt_session_token');
-                      localStorage.setItem('sr_user', JSON.stringify(localUser));
-                      setUser(localUser);
-                      setLoginModalOpen(false);
-                      router.push('/app/discover');
-                    }
-                  } catch {
-                    const localUser: UserSession = {
-                      id: 'usr_local_' + Date.now(),
-                      email: 'trader@solradar.io',
-                      username: 'SolTrader',
-                      plan: 'hunter',
-                      role: 'user',
-                    };
-                    localStorage.setItem('sr_access_token', 'local_jwt_session_token');
-                    localStorage.setItem('sr_user', JSON.stringify(localUser));
-                    setUser(localUser);
-                    setLoginModalOpen(false);
-                    router.push('/app/discover');
-                  }
+              <TelegramLoginWidget
+                onSuccess={(authedUser) => {
+                  setUser(authedUser);
+                  setLoginModalOpen(false);
                 }}
-                className="btn btn-primary"
-                style={{ width: '100%', padding: '10px' }}
-              >
-                Sign in with Telegram
-              </button>
+              />
 
               <div style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text-sub)' }}>
                 Non-custodial intelligence. We never request private keys.

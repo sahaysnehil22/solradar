@@ -3,7 +3,8 @@
  * Non-custodial signals and memecoin intelligence.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+import { API_BASE } from './config';
+export { API_BASE };
 
 export interface UserSession {
   id: string;
@@ -16,17 +17,19 @@ export interface UserSession {
 
 export function getStoredToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem('sr_access_token');
+  return localStorage.getItem('token') || localStorage.getItem('sr_access_token');
 }
 
 export function setStoredSession(token: string, user: UserSession): void {
   if (typeof window === 'undefined') return;
+  localStorage.setItem('token', token);
   localStorage.setItem('sr_access_token', token);
   localStorage.setItem('sr_user', JSON.stringify(user));
 }
 
 export function clearStoredSession(): void {
   if (typeof window === 'undefined') return;
+  localStorage.removeItem('token');
   localStorage.removeItem('sr_access_token');
   localStorage.removeItem('sr_user');
 }
@@ -188,6 +191,14 @@ export async function getReferralHistory() {
   return request<any[]>('/api/referrals/history');
 }
 
+// 5b. Billing
+export async function createCheckout(planCode: string) {
+  return request<any>('/api/billing/checkout', {
+    method: 'POST',
+    body: JSON.stringify({ planCode }),
+  });
+}
+
 // 6. Auth
 export async function loginWithTelegram(authData: {
   id: number;
@@ -198,16 +209,38 @@ export async function loginWithTelegram(authData: {
   auth_date: number;
   hash: string;
 }) {
-  const res = await request<{ user: UserSession; tokens: { accessToken: string; refreshToken: string } }>('/api/auth/telegram', {
+  const res = await request<{
+    token?: string;
+    user: UserSession;
+    tokens?: { accessToken: string; refreshToken: string };
+  }>('/api/auth/telegram', {
     method: 'POST',
     body: JSON.stringify(authData),
   });
-  setStoredSession(res.tokens.accessToken, res.user);
-  return res;
+
+  const token = res.token || res.tokens?.accessToken;
+  if (!token) {
+    throw new Error('Server did not return an access token');
+  }
+
+  setStoredSession(token, res.user);
+  return { token, user: res.user, tokens: res.tokens };
 }
 
-export async function getMe() {
-  return request<UserSession>('/api/auth/me');
+export async function getMe(): Promise<UserSession | null> {
+  const token = getStoredToken();
+  if (!token) return null;
+  try {
+    const user = await request<UserSession>('/api/auth/me');
+    if (user && user.id) {
+      setStoredSession(token, user);
+      return user;
+    }
+    return null;
+  } catch {
+    clearStoredSession();
+    return null;
+  }
 }
 
 export async function logoutUser() {
