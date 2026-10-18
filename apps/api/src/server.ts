@@ -35,7 +35,17 @@ export async function createServer(): Promise<FastifyInstance> {
 
   // Verify database connection at startup
   await checkPrismaConnection();
+  await snipeService.ensureSnipeTables();
   await tokensService.ensureInitialTokensSeeded();
+
+  // Periodic DexScreener sync every 60s
+  if (env.NODE_ENV !== 'test') {
+    setInterval(() => {
+      tokensService.syncRealDexScreenerTokens().catch((e: any) => {
+        logger.warn('Background DexScreener sync handled:', e.message);
+      });
+    }, 60000);
+  }
 
   // Security headers with Helmet
   await app.register(helmet, {

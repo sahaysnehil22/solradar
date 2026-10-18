@@ -17,6 +17,8 @@ export default function SnipeAlertsPage() {
   const [maxDevHolding, setMaxDevHolding] = useState(10);
   const [creating, setCreating] = useState(false);
   const [copiedMint, setCopiedMint] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const loadData = async () => {
     try {
@@ -42,6 +44,8 @@ export default function SnipeAlertsPage() {
   const handleCreateRule = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreating(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
     try {
       await createSnipeRule({
         name: ruleName,
@@ -52,9 +56,10 @@ export default function SnipeAlertsPage() {
         channel: 'telegram',
       });
       setRuleName('Pump.fun Launch Alert');
+      setSuccessMessage('Snipe alert rule activated! Live signals will dispatch to your Telegram bot.');
       await loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to create snipe rule');
+      setErrorMessage(err.message || 'Failed to create snipe rule');
     } finally {
       setCreating(false);
     }
@@ -173,6 +178,17 @@ export default function SnipeAlertsPage() {
                 />
               </div>
             </div>
+
+            {errorMessage && (
+              <div style={{ padding: '8px 12px', background: 'rgba(255, 51, 85, 0.1)', border: '1px solid var(--down)', borderRadius: 'var(--radius)', color: 'var(--down)', fontSize: '12px' }}>
+                {errorMessage}
+              </div>
+            )}
+            {successMessage && (
+              <div style={{ padding: '8px 12px', background: 'rgba(0, 220, 130, 0.1)', border: '1px solid var(--up)', borderRadius: 'var(--radius)', color: 'var(--up)', fontSize: '12px' }}>
+                {successMessage}
+              </div>
+            )}
 
             <button
               type="submit"

@@ -1,28 +1,29 @@
 :root {
-  --bg-primary: #0a0a0c;
-  --bg-secondary: #111114;
-  --bg-card: #151518;
-  --bg-card-hover: #1c1c21;
-  --border-color: #1c1c21;
-  --border-strong: #282830;
+  /* Deep Matte Dark Black Trading Terminal Theme (Axiom / Photon style) */
+  --bg-primary: #050608;
+  --bg-secondary: #0a0b0f;
+  --bg-card: #0d0e14;
+  --bg-card-hover: #12141c;
+  --border-color: #171924;
+  --border-strong: #232738;
 
-  --text-main: #f4f4f6;
-  --text-muted: #9ba1b0;
-  --text-sub: #646875;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-sub: #556177;
 
-  /* Restrained Purple Accent */
+  /* Trading Terminal Accents */
   --accent: #8b5cf6;
   --accent-hover: #7c3aed;
-  --accent-dim: rgba(139, 92, 246, 0.12);
-  --accent-subtle: rgba(139, 92, 246, 0.06);
+  --accent-dim: rgba(139, 92, 246, 0.14);
+  --accent-subtle: rgba(139, 92, 246, 0.05);
 
-  --up: #10b981;
-  --down: #ef4444;
+  --up: #00dc82;
+  --down: #ff3355;
   --warning: #f59e0b;
 
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --radius: 4px;
-  --radius-sm: 3px;
+  --radius-sm: 2px;
   --radius-md: 6px;
 }
 
